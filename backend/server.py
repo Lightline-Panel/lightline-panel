@@ -1,74 +1,647 @@
-from fastapi import FastAPI, APIRouter
-from dotenv import load_dotenv
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
+from sqlalchemy import select, func, desc, update, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime, timezone, timedelta
+import asyncio
 import os
 import logging
+import secrets
+import hashlib
+import random
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
-from typing import List
-import uuid
-from datetime import datetime, timezone
-
+from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+from database import async_session, get_db, engine, Base
+from models import Admin, Node, VPNUser, TrafficLog, License, AuditLog, PanelSettings
+from auth import (hash_password, verify_password, create_access_token,
+                  create_refresh_token, decode_token, get_current_admin)
+from outline_client import OutlineClient
 
-# Create the main app without a prefix
-app = FastAPI()
+OUTLINE_MODE = os.environ.get('OUTLINE_MODE', 'mock')
 
-# Create a router with the /api prefix
+app = FastAPI(title="Lightline VPN Panel")
 api_router = APIRouter(prefix="/api")
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Define Models
-class StatusCheck(BaseModel):
-    model_config = ConfigDict(extra="ignore")  # Ignore MongoDB's _id field
-    
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+# ===== Pydantic Schemas =====
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
-# Add your routes to the router instead of directly to app
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+class SetupRequest(BaseModel):
+    username: str
+    password: str
+
+class NodeCreate(BaseModel):
+    name: str
+    ip: str
+    api_port: int
+    api_key: str
+    country: Optional[str] = None
+
+class NodeUpdate(BaseModel):
+    name: Optional[str] = None
+    ip: Optional[str] = None
+    api_port: Optional[int] = None
+    api_key: Optional[str] = None
+    country: Optional[str] = None
+
+class UserCreate(BaseModel):
+    username: str
+    password: Optional[str] = None
+    traffic_limit: Optional[int] = 0
+    device_limit: Optional[int] = 1
+    expire_date: Optional[str] = None
+    assigned_node_id: Optional[int] = None
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    traffic_limit: Optional[int] = None
+    device_limit: Optional[int] = None
+    expire_date: Optional[str] = None
+    assigned_node_id: Optional[int] = None
+    status: Optional[str] = None
+
+class SwitchNodeRequest(BaseModel):
+    node_id: int
+
+class LicenseCreate(BaseModel):
+    expire_days: int = 30
+    max_servers: int = 1
+
+class LicenseValidate(BaseModel):
+    license_key: str
+
+class SettingsUpdate(BaseModel):
+    settings: dict
+
+
+# ===== Auth Routes =====
+
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "Lightline VPN Panel API", "version": "1.0.0"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.model_dump()
-    status_obj = StatusCheck(**status_dict)
-    
-    # Convert to dict and serialize datetime to ISO string for MongoDB
-    doc = status_obj.model_dump()
-    doc['timestamp'] = doc['timestamp'].isoformat()
-    
-    _ = await db.status_checks.insert_one(doc)
-    return status_obj
+@api_router.get("/auth/check-setup")
+async def check_setup(db: AsyncSession = Depends(get_db)):
+    count = (await db.execute(select(func.count(Admin.id)))).scalar()
+    return {"setup_required": count == 0}
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    # Exclude MongoDB's _id field from the query results
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    
-    # Convert ISO string timestamps back to datetime objects
-    for check in status_checks:
-        if isinstance(check['timestamp'], str):
-            check['timestamp'] = datetime.fromisoformat(check['timestamp'])
-    
-    return status_checks
+@api_router.post("/auth/setup")
+async def setup_admin(req: SetupRequest, db: AsyncSession = Depends(get_db)):
+    count = (await db.execute(select(func.count(Admin.id)))).scalar()
+    if count > 0:
+        raise HTTPException(400, "Admin already exists. Use login.")
+    admin = Admin(username=req.username, password_hash=hash_password(req.password), role='admin')
+    db.add(admin)
+    await db.flush()
+    db.add(AuditLog(admin_id=admin.id, action='admin_setup', details='Initial admin account created'))
+    return {"message": "Admin created successfully", "username": req.username}
 
-# Include the router in the main app
+@api_router.post("/auth/login", response_model=TokenResponse)
+async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Admin).where(Admin.username == req.username))
+    admin = result.scalar_one_or_none()
+    if not admin or not verify_password(req.password, admin.password_hash):
+        raise HTTPException(401, "Invalid credentials")
+    token_data = {"sub": str(admin.id), "username": admin.username, "role": admin.role}
+    db.add(AuditLog(admin_id=admin.id, action='login', ip_address=request.client.host if request.client else None))
+    return TokenResponse(
+        access_token=create_access_token(token_data),
+        refresh_token=create_refresh_token(token_data)
+    )
+
+@api_router.post("/auth/refresh", response_model=TokenResponse)
+async def refresh_token(req: RefreshRequest):
+    payload = decode_token(req.refresh_token)
+    if payload.get('type') != 'refresh':
+        raise HTTPException(401, "Invalid refresh token")
+    token_data = {"sub": payload["sub"], "username": payload["username"], "role": payload["role"]}
+    return TokenResponse(
+        access_token=create_access_token(token_data),
+        refresh_token=create_refresh_token(token_data)
+    )
+
+@api_router.get("/auth/me")
+async def get_me(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Admin).where(Admin.id == int(admin["sub"])))
+    a = result.scalar_one_or_none()
+    if not a:
+        raise HTTPException(404, "Admin not found")
+    return {"id": a.id, "username": a.username, "role": a.role, "created_at": a.created_at.isoformat()}
+
+
+# ===== Dashboard =====
+
+@api_router.get("/dashboard")
+async def get_dashboard(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    nodes_total = (await db.execute(select(func.count(Node.id)))).scalar()
+    nodes_online = (await db.execute(select(func.count(Node.id)).where(Node.status == 'online'))).scalar()
+    users_total = (await db.execute(select(func.count(VPNUser.id)))).scalar()
+    users_active = (await db.execute(select(func.count(VPNUser.id)).where(VPNUser.status == 'active'))).scalar()
+
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    traffic_today = (await db.execute(
+        select(func.coalesce(func.sum(TrafficLog.bytes_transferred), 0)).where(TrafficLog.recorded_at >= today)
+    )).scalar()
+    traffic_total = (await db.execute(
+        select(func.coalesce(func.sum(TrafficLog.bytes_transferred), 0))
+    )).scalar()
+
+    lic = (await db.execute(select(License).where(License.status == 'active').limit(1))).scalar_one_or_none()
+
+    logs = (await db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)).limit(10))).scalars().all()
+    nodes = (await db.execute(select(Node).order_by(Node.name))).scalars().all()
+
+    return {
+        "nodes": {"total": nodes_total, "online": nodes_online, "offline": nodes_total - nodes_online},
+        "users": {"total": users_total, "active": users_active},
+        "traffic": {"today": traffic_today, "total": traffic_total},
+        "license": {
+            "active": lic is not None,
+            "key": lic.license_key[:12] + "..." if lic else None,
+            "expires_in": lic.expire_days if lic else None,
+            "status": lic.status if lic else "none"
+        },
+        "recent_activity": [
+            {"id": l.id, "action": l.action, "details": l.details, "created_at": l.created_at.isoformat()}
+            for l in logs
+        ],
+        "node_health": [
+            {"id": n.id, "name": n.name, "country": n.country, "status": n.status,
+             "last_heartbeat": n.last_heartbeat.isoformat() if n.last_heartbeat else None}
+            for n in nodes
+        ]
+    }
+
+
+# ===== Node Routes =====
+
+@api_router.get("/nodes")
+async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    nodes = (await db.execute(select(Node).order_by(Node.name))).scalars().all()
+    result = []
+    for n in nodes:
+        uc = (await db.execute(select(func.count(VPNUser.id)).where(VPNUser.assigned_node_id == n.id))).scalar()
+        result.append({
+            "id": n.id, "name": n.name, "ip": n.ip, "api_port": n.api_port,
+            "api_key": n.api_key[:16] + "..." if len(n.api_key) > 16 else n.api_key,
+            "country": n.country, "status": n.status,
+            "last_heartbeat": n.last_heartbeat.isoformat() if n.last_heartbeat else None,
+            "created_at": n.created_at.isoformat(), "user_count": uc
+        })
+    return result
+
+@api_router.post("/nodes")
+async def create_node(req: NodeCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    node = Node(name=req.name, ip=req.ip, api_port=req.api_port, api_key=req.api_key, country=req.country, status='unknown')
+    db.add(node)
+    await db.flush()
+    client = OutlineClient(f"https://{req.ip}:{req.api_port}", req.api_key)
+    try:
+        healthy = await client.check_health()
+        node.status = 'online' if healthy else 'offline'
+        node.last_heartbeat = datetime.now(timezone.utc)
+    except Exception:
+        node.status = 'offline'
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='node_created',
+                    details=f'Node "{req.name}" ({req.country}) added',
+                    ip_address=request.client.host if request.client else None))
+    return {"id": node.id, "name": node.name, "status": node.status}
+
+@api_router.put("/nodes/{node_id}")
+async def update_node(node_id: int, req: NodeUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
+    if not node:
+        raise HTTPException(404, "Node not found")
+    for k, v in req.model_dump(exclude_none=True).items():
+        setattr(node, k, v)
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='node_updated',
+                    details=f'Node "{node.name}" updated',
+                    ip_address=request.client.host if request.client else None))
+    return {"message": "Node updated"}
+
+@api_router.delete("/nodes/{node_id}")
+async def delete_node(node_id: int, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
+    if not node:
+        raise HTTPException(404, "Node not found")
+    await db.execute(update(VPNUser).where(VPNUser.assigned_node_id == node_id).values(assigned_node_id=None))
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='node_deleted',
+                    details=f'Node "{node.name}" deleted',
+                    ip_address=request.client.host if request.client else None))
+    await db.delete(node)
+    return {"message": "Node deleted"}
+
+@api_router.post("/nodes/{node_id}/health-check")
+async def health_check(node_id: int, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
+    if not node:
+        raise HTTPException(404, "Node not found")
+    client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
+    try:
+        healthy = await client.check_health()
+        node.status = 'online' if healthy else 'offline'
+        node.last_heartbeat = datetime.now(timezone.utc)
+    except Exception:
+        node.status = 'offline'
+    return {"status": node.status, "last_heartbeat": node.last_heartbeat.isoformat() if node.last_heartbeat else None}
+
+@api_router.post("/nodes/{node_id}/sync-keys")
+async def sync_keys(node_id: int, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
+    if not node:
+        raise HTTPException(404, "Node not found")
+    client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
+    keys_data = await client.get_access_keys()
+    return {"keys": keys_data.get("accessKeys", []), "synced": True}
+
+
+# ===== User Routes =====
+
+@api_router.get("/users")
+async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    users = (await db.execute(select(VPNUser).order_by(desc(VPNUser.created_at)))).scalars().all()
+    result = []
+    for u in users:
+        traffic = (await db.execute(
+            select(func.coalesce(func.sum(TrafficLog.bytes_transferred), 0)).where(TrafficLog.user_id == u.id)
+        )).scalar()
+        node_name = None
+        if u.assigned_node_id:
+            node_name = (await db.execute(select(Node.name).where(Node.id == u.assigned_node_id))).scalar_one_or_none()
+        result.append({
+            "id": u.id, "username": u.username, "traffic_limit": u.traffic_limit,
+            "device_limit": u.device_limit,
+            "expire_date": u.expire_date.isoformat() if u.expire_date else None,
+            "assigned_node_id": u.assigned_node_id, "node_name": node_name,
+            "outline_key_id": u.outline_key_id, "access_url": u.access_url,
+            "status": u.status, "created_at": u.created_at.isoformat(), "traffic_used": traffic
+        })
+    return result
+
+@api_router.post("/users")
+async def create_user(req: UserCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    existing = (await db.execute(select(VPNUser).where(VPNUser.username == req.username))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(400, "Username already exists")
+    user = VPNUser(
+        username=req.username,
+        password_hash=hash_password(req.password) if req.password else None,
+        traffic_limit=req.traffic_limit or 0,
+        device_limit=req.device_limit or 1,
+        expire_date=datetime.fromisoformat(req.expire_date) if req.expire_date else None,
+        assigned_node_id=req.assigned_node_id, status='active'
+    )
+    db.add(user)
+    await db.flush()
+    if req.assigned_node_id:
+        node = (await db.execute(select(Node).where(Node.id == req.assigned_node_id))).scalar_one_or_none()
+        if node:
+            client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
+            key_data = await client.create_access_key(name=req.username)
+            user.outline_key_id = key_data.get('id')
+            user.access_url = key_data.get('accessUrl')
+            if req.traffic_limit and req.traffic_limit > 0:
+                await client.set_data_limit(key_data['id'], req.traffic_limit)
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='user_created',
+                    details=f'VPN user "{req.username}" created',
+                    ip_address=request.client.host if request.client else None))
+    return {"id": user.id, "username": user.username, "access_url": user.access_url, "outline_key_id": user.outline_key_id}
+
+@api_router.put("/users/{user_id}")
+async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    data = req.model_dump(exclude_none=True)
+    if 'password' in data:
+        data['password_hash'] = hash_password(data.pop('password'))
+    if 'expire_date' in data and data['expire_date']:
+        data['expire_date'] = datetime.fromisoformat(data['expire_date'])
+    for k, v in data.items():
+        setattr(user, k, v)
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='user_updated',
+                    details=f'VPN user "{user.username}" updated',
+                    ip_address=request.client.host if request.client else None))
+    return {"message": "User updated"}
+
+@api_router.delete("/users/{user_id}")
+async def delete_user(user_id: int, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if user.outline_key_id and user.assigned_node_id:
+        node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+        if node:
+            client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
+            await client.delete_access_key(user.outline_key_id)
+    await db.execute(delete(TrafficLog).where(TrafficLog.user_id == user_id))
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='user_deleted',
+                    details=f'VPN user "{user.username}" deleted',
+                    ip_address=request.client.host if request.client else None))
+    await db.delete(user)
+    return {"message": "User deleted"}
+
+@api_router.post("/users/{user_id}/switch-node")
+async def switch_node(user_id: int, req: SwitchNodeRequest, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    new_node = (await db.execute(select(Node).where(Node.id == req.node_id))).scalar_one_or_none()
+    if not new_node:
+        raise HTTPException(404, "Target node not found")
+    if new_node.status != 'online':
+        raise HTTPException(400, "Target node is not online")
+    if user.outline_key_id and user.assigned_node_id:
+        old_node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+        if old_node:
+            await OutlineClient(f"https://{old_node.ip}:{old_node.api_port}", old_node.api_key).delete_access_key(user.outline_key_id)
+    new_client = OutlineClient(f"https://{new_node.ip}:{new_node.api_port}", new_node.api_key)
+    key_data = await new_client.create_access_key(name=user.username)
+    user.assigned_node_id = req.node_id
+    user.outline_key_id = key_data.get('id')
+    user.access_url = key_data.get('accessUrl')
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='user_node_switched',
+                    details=f'User "{user.username}" switched to "{new_node.name}"',
+                    ip_address=request.client.host if request.client else None))
+    return {"message": "Node switched", "access_url": user.access_url}
+
+
+# ===== Traffic Routes =====
+
+@api_router.get("/traffic")
+async def get_traffic(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    by_user = (await db.execute(
+        select(VPNUser.id, VPNUser.username, func.coalesce(func.sum(TrafficLog.bytes_transferred), 0).label('total'))
+        .outerjoin(TrafficLog, TrafficLog.user_id == VPNUser.id)
+        .group_by(VPNUser.id, VPNUser.username).order_by(desc('total'))
+    )).all()
+    by_node = (await db.execute(
+        select(Node.id, Node.name, Node.country, func.coalesce(func.sum(TrafficLog.bytes_transferred), 0).label('total'))
+        .outerjoin(TrafficLog, TrafficLog.node_id == Node.id)
+        .group_by(Node.id, Node.name, Node.country).order_by(desc('total'))
+    )).all()
+    return {
+        "by_user": [{"user_id": r[0], "username": r[1], "bytes": r[2]} for r in by_user],
+        "by_node": [{"node_id": r[0], "name": r[1], "country": r[2], "bytes": r[3]} for r in by_node]
+    }
+
+@api_router.get("/traffic/daily")
+async def get_daily_traffic(days: int = 30, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    result = (await db.execute(
+        select(func.date(TrafficLog.recorded_at).label('date'), func.sum(TrafficLog.bytes_transferred).label('bytes'))
+        .where(TrafficLog.recorded_at >= start)
+        .group_by(func.date(TrafficLog.recorded_at))
+        .order_by(func.date(TrafficLog.recorded_at))
+    )).all()
+    return [{"date": str(r[0]), "bytes": r[1]} for r in result]
+
+
+# ===== License Routes =====
+
+@api_router.get("/licenses")
+async def get_licenses(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    lics = (await db.execute(select(License).order_by(desc(License.created_at)))).scalars().all()
+    return [{
+        "id": l.id, "license_key": l.license_key, "created_at": l.created_at.isoformat(),
+        "expire_days": l.expire_days, "status": l.status, "max_servers": l.max_servers,
+        "activated_servers": l.activated_servers, "server_fingerprint": l.server_fingerprint
+    } for l in lics]
+
+@api_router.post("/licenses")
+async def create_license(req: LicenseCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    key = f"LL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+    lic = License(license_key=key, expire_days=req.expire_days, max_servers=req.max_servers, status='active')
+    db.add(lic)
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='license_created',
+                    details=f'License key generated ({req.expire_days} days, {req.max_servers} servers)',
+                    ip_address=request.client.host if request.client else None))
+    await db.flush()
+    return {"id": lic.id, "license_key": key}
+
+@api_router.delete("/licenses/{license_id}")
+async def revoke_license(license_id: int, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    lic = (await db.execute(select(License).where(License.id == license_id))).scalar_one_or_none()
+    if not lic:
+        raise HTTPException(404, "License not found")
+    lic.status = 'revoked'
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='license_revoked',
+                    details=f'License {lic.license_key[:12]}... revoked',
+                    ip_address=request.client.host if request.client else None))
+    return {"message": "License revoked"}
+
+@api_router.post("/licenses/validate")
+async def validate_license(req: LicenseValidate, db: AsyncSession = Depends(get_db)):
+    lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
+    if not lic:
+        return {"valid": False, "reason": "License key not found"}
+    if lic.status != 'active':
+        return {"valid": False, "reason": f"License is {lic.status}"}
+    expire_date = lic.created_at + timedelta(days=lic.expire_days)
+    if datetime.now(timezone.utc) > expire_date:
+        lic.status = 'expired'
+        return {"valid": False, "reason": "License expired"}
+    if lic.activated_servers >= lic.max_servers:
+        return {"valid": False, "reason": "Maximum activations reached"}
+    return {"valid": True, "expires_in_days": (expire_date - datetime.now(timezone.utc)).days,
+            "max_servers": lic.max_servers, "activated_servers": lic.activated_servers}
+
+
+# ===== Audit Logs =====
+
+@api_router.get("/audit-logs")
+async def get_audit_logs(page: int = 1, limit: int = 50, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    total = (await db.execute(select(func.count(AuditLog.id)))).scalar()
+    logs = (await db.execute(
+        select(AuditLog).order_by(desc(AuditLog.created_at)).offset((page - 1) * limit).limit(limit)
+    )).scalars().all()
+    return {
+        "total": total, "page": page, "limit": limit,
+        "logs": [{"id": l.id, "admin_id": l.admin_id, "action": l.action, "details": l.details,
+                  "ip_address": l.ip_address, "created_at": l.created_at.isoformat()} for l in logs]
+    }
+
+
+# ===== Settings =====
+
+@api_router.get("/settings")
+async def get_settings(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    settings = (await db.execute(select(PanelSettings))).scalars().all()
+    return {s.key: s.value for s in settings}
+
+@api_router.put("/settings")
+async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    for key, value in req.settings.items():
+        existing = (await db.execute(select(PanelSettings).where(PanelSettings.key == key))).scalar_one_or_none()
+        if existing:
+            existing.value = str(value)
+        else:
+            db.add(PanelSettings(key=key, value=str(value)))
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='settings_updated',
+                    details='Panel settings updated', ip_address=request.client.host if request.client else None))
+    return {"message": "Settings updated"}
+
+
+# ===== Backup =====
+
+@api_router.post("/backup")
+async def create_backup(request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    nodes = (await db.execute(select(Node))).scalars().all()
+    users = (await db.execute(select(VPNUser))).scalars().all()
+    lics = (await db.execute(select(License))).scalars().all()
+    settings = (await db.execute(select(PanelSettings))).scalars().all()
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='backup_created',
+                    details='Database backup created', ip_address=request.client.host if request.client else None))
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(), "version": "1.0.0",
+        "nodes": [{"name": n.name, "ip": n.ip, "api_port": n.api_port, "country": n.country} for n in nodes],
+        "users": [{"username": u.username, "traffic_limit": u.traffic_limit, "device_limit": u.device_limit, "status": u.status} for u in users],
+        "licenses": [{"license_key": l.license_key, "expire_days": l.expire_days, "status": l.status, "max_servers": l.max_servers} for l in lics],
+        "settings": {s.key: s.value for s in settings}
+    }
+
+
+# ===== Background Tasks =====
+
+async def check_all_nodes_health():
+    while True:
+        try:
+            async with async_session() as session:
+                nodes = (await session.execute(select(Node))).scalars().all()
+                for node in nodes:
+                    client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
+                    try:
+                        healthy = await client.check_health()
+                        node.status = 'online' if healthy else 'offline'
+                        node.last_heartbeat = datetime.now(timezone.utc)
+                    except Exception:
+                        node.status = 'offline'
+                await session.commit()
+                logger.info(f"Health check: {len(nodes)} nodes checked")
+        except Exception as e:
+            logger.error(f"Health check error: {e}")
+        await asyncio.sleep(300)
+
+async def generate_mock_traffic():
+    while True:
+        try:
+            if OUTLINE_MODE == 'mock':
+                async with async_session() as session:
+                    users = (await session.execute(
+                        select(VPNUser).where(VPNUser.status == 'active', VPNUser.assigned_node_id.isnot(None))
+                    )).scalars().all()
+                    for user in users:
+                        session.add(TrafficLog(
+                            user_id=user.id, node_id=user.assigned_node_id,
+                            bytes_transferred=random.randint(5_000_000, 800_000_000)
+                        ))
+                    await session.commit()
+                    logger.info(f"Mock traffic: generated for {len(users)} users")
+        except Exception as e:
+            logger.error(f"Mock traffic error: {e}")
+        await asyncio.sleep(3600)
+
+
+async def seed_mock_data():
+    async with async_session() as session:
+        count = (await session.execute(select(func.count(Admin.id)))).scalar()
+        if count > 0:
+            return
+        admin = Admin(username='admin', password_hash=hash_password('admin123'), role='admin')
+        session.add(admin)
+        await session.flush()
+
+        countries = [
+            ("Frankfurt DE", "185.100.86.1", 14322, "DE"),
+            ("Amsterdam NL", "94.140.14.1", 28891, "NL"),
+            ("Istanbul TR", "31.210.20.1", 43100, "TR"),
+            ("New York US", "104.16.1.1", 51022, "US"),
+            ("Tokyo JP", "103.5.28.1", 19443, "JP"),
+        ]
+        nodes = []
+        for name, ip, port, country in countries:
+            n = Node(name=name, ip=ip, api_port=port, api_key=secrets.token_hex(32),
+                     country=country, status=random.choice(['online', 'online', 'online', 'offline']),
+                     last_heartbeat=datetime.now(timezone.utc) - timedelta(minutes=random.randint(0, 30)))
+            session.add(n)
+            nodes.append(n)
+        await session.flush()
+
+        usernames = ['alice', 'bob', 'charlie', 'david', 'emma', 'frank', 'grace', 'henry', 'ivy', 'jack']
+        users = []
+        for uname in usernames:
+            nd = random.choice(nodes)
+            u = VPNUser(username=uname, password_hash=hash_password('password'),
+                        traffic_limit=random.choice([0, 5_000_000_000, 10_000_000_000, 50_000_000_000]),
+                        device_limit=random.choice([1, 2, 3, 5]),
+                        expire_date=datetime.now(timezone.utc) + timedelta(days=random.randint(10, 90)),
+                        assigned_node_id=nd.id, outline_key_id=str(random.randint(1000, 9999)),
+                        access_url=f"ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwYXNz@{nd.ip}:8388/?outline=1#{uname}",
+                        status='active')
+            session.add(u)
+            users.append(u)
+        await session.flush()
+
+        for day in range(30):
+            dt = datetime.now(timezone.utc) - timedelta(days=day)
+            for user in users:
+                if user.assigned_node_id and random.random() > 0.2:
+                    session.add(TrafficLog(user_id=user.id, node_id=user.assigned_node_id,
+                                           bytes_transferred=random.randint(50_000_000, 3_000_000_000),
+                                           recorded_at=dt.replace(hour=random.randint(0, 23))))
+
+        session.add(License(
+            license_key=f"LL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}",
+            expire_days=365, max_servers=10, activated_servers=1, status='active'))
+
+        actions = ['login', 'node_created', 'user_created', 'settings_updated', 'license_created', 'user_node_switched']
+        for i in range(20):
+            session.add(AuditLog(admin_id=admin.id, action=random.choice(actions),
+                                  details=f'System activity #{i+1}', ip_address='127.0.0.1',
+                                  created_at=datetime.now(timezone.utc) - timedelta(hours=random.randint(0, 720))))
+        await session.commit()
+        logger.info("Mock data seeded: admin/admin123")
+
+
+# ===== App Events =====
+
+@app.on_event("startup")
+async def startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database tables created")
+    if OUTLINE_MODE == 'mock':
+        await seed_mock_data()
+    asyncio.create_task(check_all_nodes_health())
+    if OUTLINE_MODE == 'mock':
+        asyncio.create_task(generate_mock_traffic())
+    logger.info(f"Lightline VPN Panel started (mode={OUTLINE_MODE})")
+
+@app.on_event("shutdown")
+async def shutdown():
+    await engine.dispose()
+
 app.include_router(api_router)
-
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -76,14 +649,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
