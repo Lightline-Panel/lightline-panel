@@ -83,13 +83,11 @@ class RefreshRequest(BaseModel):
 class NodeCreate(BaseModel):
     name: str
     ip: str
-    ss_port: int = 8388
     country: Optional[str] = None
 
 class NodeUpdate(BaseModel):
     name: Optional[str] = None
     ip: Optional[str] = None
-    ss_port: Optional[int] = None
     country: Optional[str] = None
 
 class UserCreate(BaseModel):
@@ -273,14 +271,25 @@ async def get_user_qrcode(user_id: int, admin=Depends(get_current_admin), db: As
 
 # ===== SS URL Helper =====
 
-def _build_user_ss_url(user, node) -> str:
+async def _get_global_ss_port(db) -> int:
+    """Get the global SS port from panel settings, fallback to env/default."""
+    row = (await db.execute(select(PanelSettings).where(PanelSettings.key == 'ss_port'))).scalar_one_or_none()
+    if row and row.value:
+        try:
+            return int(row.value)
+        except ValueError:
+            pass
+    return int(os.environ.get('SS_PORT', '8388'))
+
+
+def _build_user_ss_url(user, node, ss_port: int = 8388) -> str:
     """Build a proper ss:// URL for a user on a node."""
     if not node or not user.ss_password:
         return ""
     return build_ss_url(
         password=user.ss_password,
         host=node.ip,
-        port=node.ss_port or 8388,
+        port=ss_port,
         tag=user.username,
     )
 
@@ -339,12 +348,14 @@ async def get_dashboard(admin=Depends(get_current_admin), db: AsyncSession = Dep
 @api_router.get("/nodes")
 async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     nodes = (await db.execute(select(Node).order_by(Node.name))).scalars().all()
+    ss_port = await _get_global_ss_port(db)
     result = []
     for n in nodes:
         uc = (await db.execute(select(func.count(VPNUser.id)).where(VPNUser.assigned_node_id == n.id))).scalar()
         result.append({
             "id": n.id, "name": n.name, "ip": n.ip,
-            "ss_port": n.ss_port or 8388,
+            "api_port": n.api_port or 9090,
+            "ss_port": ss_port,
             "node_token": n.api_key or "",
             "country": n.country, "status": n.status,
             "last_heartbeat": n.last_heartbeat.isoformat() if n.last_heartbeat else None,
@@ -355,16 +366,18 @@ async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends
 @api_router.post("/nodes")
 async def create_node(req: NodeCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     node_token = secrets.token_urlsafe(32)
-    node = Node(name=req.name, ip=req.ip, ss_port=req.ss_port, country=req.country,
-                api_key=node_token, status='online')
+    # Auto-assign api_port: find highest existing and increment
+    max_port = (await db.execute(select(func.max(Node.api_port)))).scalar()
+    api_port = (max_port or 9089) + 1  # starts at 9090
+    node = Node(name=req.name, ip=req.ip, api_port=api_port, country=req.country,
+                api_key=node_token, status='offline')
     db.add(node)
     await db.flush()
-    node.last_heartbeat = datetime.now(timezone.utc)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='node_created',
-                    details=f'Node "{req.name}" ({req.country}) added — SS port {req.ss_port}',
+                    details=f'Node "{req.name}" ({req.country}) added — API port {api_port}',
                     ip_address=request.client.host if request.client else None))
     await cache_delete('dashboard')
-    return {"id": node.id, "name": node.name, "status": node.status, "node_token": node_token}
+    return {"id": node.id, "name": node.name, "status": node.status, "node_token": node_token, "api_port": api_port}
 
 @api_router.put("/nodes/{node_id}")
 async def update_node(node_id: int, req: NodeUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
@@ -392,24 +405,68 @@ async def delete_node(node_id: int, request: Request, admin=Depends(get_current_
     await cache_delete('dashboard')
     return {"message": "Node deleted"}
 
+@api_router.post("/nodes/refresh-all")
+async def refresh_all_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    """Health-check all nodes at once."""
+    nodes = (await db.execute(select(Node))).scalars().all()
+    results = {}
+    for node in nodes:
+        node.status = await _check_node_health(node)
+        if node.status == 'online':
+            node.last_heartbeat = datetime.now(timezone.utc)
+        results[node.name] = node.status
+    await cache_delete('dashboard')
+    return {"message": f"{len(nodes)} nodes checked", "results": results}
+
 @api_router.post("/nodes/{node_id}/health-check")
 async def health_check(node_id: int, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
     if not node:
         raise HTTPException(404, "Node not found")
+    node.status = await _check_node_health(node)
+    if node.status == 'online':
+        node.last_heartbeat = datetime.now(timezone.utc)
+    await cache_delete('dashboard')
+    return {"status": node.status, "last_heartbeat": node.last_heartbeat.isoformat() if node.last_heartbeat else None}
+
+
+async def _check_node_health(node) -> str:
+    """Check a node's health via its API, fallback to TCP SS port."""
+    api_port = node.api_port or 9090
+    token = node.api_key or ''
+    # Method 1: Try the node agent REST API
+    if token:
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(node.ip, api_port), timeout=5
+            )
+            request_line = (
+                f"GET /health HTTP/1.1\r\n"
+                f"Host: {node.ip}:{api_port}\r\n"
+                f"Authorization: Bearer {token}\r\n"
+                f"Connection: close\r\n\r\n"
+            )
+            writer.write(request_line.encode())
+            await writer.drain()
+            response = await asyncio.wait_for(reader.read(4096), timeout=5)
+            writer.close()
+            await writer.wait_closed()
+            resp_str = response.decode(errors='ignore')
+            if '200' in resp_str.split('\r\n')[0]:
+                return 'online'
+        except Exception:
+            pass
+    # Method 2: Fallback — try TCP to SS port
+    ss_port = node.ss_port or 8388
     try:
-        # Try to reach the node's SS port via TCP
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(node.ip, node.ss_port or 8388), timeout=5
+            asyncio.open_connection(node.ip, ss_port), timeout=5
         )
         writer.close()
         await writer.wait_closed()
-        node.status = 'online'
-        node.last_heartbeat = datetime.now(timezone.utc)
+        return 'online'
     except Exception:
-        node.status = 'offline'
-    await cache_delete('dashboard')
-    return {"status": node.status, "last_heartbeat": node.last_heartbeat.isoformat() if node.last_heartbeat else None}
+        return 'offline'
 
 
 # ===== User Routes =====
@@ -455,7 +512,8 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
     if req.assigned_node_id:
         node = (await db.execute(select(Node).where(Node.id == req.assigned_node_id))).scalar_one_or_none()
         if node:
-            user.access_url = _build_user_ss_url(user, node)
+            ss_port = await _get_global_ss_port(db)
+            user.access_url = _build_user_ss_url(user, node, ss_port)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_created',
                     details=f'VPN user "{req.username}" created',
                     ip_address=request.client.host if request.client else None))
@@ -480,7 +538,8 @@ async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Dep
         if user.assigned_node_id:
             node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
             if node:
-                user.access_url = _build_user_ss_url(user, node)
+                ss_port = await _get_global_ss_port(db)
+                user.access_url = _build_user_ss_url(user, node, ss_port)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_updated',
                     details=f'VPN user "{user.username}" updated',
                     ip_address=request.client.host if request.client else None))
@@ -513,7 +572,8 @@ async def switch_node(user_id: int, req: SwitchNodeRequest, request: Request, ad
     user.assigned_node_id = req.node_id
     if not user.ss_password:
         user.ss_password = generate_password()
-    user.access_url = _build_user_ss_url(user, new_node)
+    ss_port = await _get_global_ss_port(db)
+    user.access_url = _build_user_ss_url(user, new_node, ss_port)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_node_switched',
                     details=f'User "{user.username}" switched to "{new_node.name}"',
                     ip_address=request.client.host if request.client else None))
@@ -530,13 +590,14 @@ async def bulk_switch_node(req: BulkSwitchNodeRequest, request: Request, admin=D
     users = (await db.execute(
         select(VPNUser).where(VPNUser.status == 'active', VPNUser.assigned_node_id.isnot(None), VPNUser.assigned_node_id != req.node_id)
     )).scalars().all()
+    ss_port = await _get_global_ss_port(db)
     switched = 0
     for user in users:
         try:
             user.assigned_node_id = req.node_id
             if not user.ss_password:
                 user.ss_password = generate_password()
-            user.access_url = _build_user_ss_url(user, new_node)
+            user.access_url = _build_user_ss_url(user, new_node, ss_port)
             switched += 1
         except Exception as e:
             logger.error(f"Bulk switch error for user {user.username}: {e}")
@@ -739,16 +800,9 @@ async def check_all_nodes_health():
             async with async_session() as session:
                 nodes = (await session.execute(select(Node))).scalars().all()
                 for node in nodes:
-                    try:
-                        reader, writer = await asyncio.wait_for(
-                            asyncio.open_connection(node.ip, node.ss_port or 8388), timeout=5
-                        )
-                        writer.close()
-                        await writer.wait_closed()
-                        node.status = 'online'
+                    node.status = await _check_node_health(node)
+                    if node.status == 'online':
                         node.last_heartbeat = datetime.now(timezone.utc)
-                    except Exception:
-                        node.status = 'offline'
                 await session.commit()
                 logger.info(f"Health check: {len(nodes)} nodes checked")
         except Exception as e:
@@ -800,14 +854,12 @@ async def startup():
         # Auto-create default local node if none exist
         if node_count == 0:
             server_ip = os.environ.get('SERVER_IP', '127.0.0.1')
-            ss_port = int(os.environ.get('SS_PORT', '8388'))
             node_token = secrets.token_urlsafe(32)
-            node = Node(name='Main Server', ip=server_ip, ss_port=ss_port,
-                        api_key=node_token, country='Local', status='online')
-            node.last_heartbeat = datetime.now(timezone.utc)
+            node = Node(name='Main Server', ip=server_ip, api_port=9090,
+                        api_key=node_token, country='Local', status='offline')
             session.add(node)
             await session.commit()
-            logger.info(f"Default node 'Main Server' created (IP: {server_ip}, SS port: {ss_port})")
+            logger.info(f"Default node 'Main Server' created (IP: {server_ip}, API port: 9090)")
     asyncio.create_task(check_all_nodes_health())
     asyncio.create_task(license_heartbeat())
     logger.info("Lightline VPN Panel started")

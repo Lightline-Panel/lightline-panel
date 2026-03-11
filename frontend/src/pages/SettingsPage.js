@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Download, Upload, Globe, Moon, Sun, Info, Shield, Loader2, ShieldCheck, ShieldOff } from 'lucide-react';
+import { Download, Upload, Globe, Moon, Sun, Info, Shield, Loader2, ShieldCheck, ShieldOff, Server } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
@@ -24,9 +24,14 @@ export default function SettingsPage() {
   const [totpLoading, setTotpLoading] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
   const [disableCode, setDisableCode] = useState('');
+  const [ssPort, setSsPort] = useState('8388');
+  const [savingPort, setSavingPort] = useState(false);
 
   useEffect(() => {
-    api.get('/settings').then(({ data }) => setSettings(data)).catch(() => {});
+    api.get('/settings').then(({ data }) => {
+      setSettings(data);
+      if (data.ss_port) setSsPort(data.ss_port);
+    }).catch(() => {});
   }, []);
 
   const toggleTheme = (dark) => {
@@ -137,8 +142,40 @@ export default function SettingsPage() {
           </Card>
         </motion.div>
 
-        {/* Backup */}
+        {/* Shadowsocks Port */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+          <Card className="ll-card border-white/5">
+            <CardHeader>
+              <CardTitle className="text-base text-white flex items-center gap-2" style={{ fontFamily: 'Outfit' }}>
+                <Server className="w-4 h-4 text-cyan-400" /> Shadowsocks Port
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-gray-400">Global SS port used by all nodes. Changing this will affect new connections.</p>
+              <div className="flex gap-3 items-end">
+                <div className="flex-1 space-y-1.5">
+                  <Label className="text-gray-400 text-xs uppercase">Port</Label>
+                  <Input type="number" value={ssPort} onChange={(e) => setSsPort(e.target.value)}
+                    className="bg-black/50 border-white/10 font-mono text-gray-200" data-testid="ss-port-input" />
+                </div>
+                <Button onClick={async () => {
+                  setSavingPort(true);
+                  try {
+                    await api.put('/settings', { settings: { ss_port: ssPort } });
+                    toast.success('SS port updated');
+                  } catch { toast.error('Failed to save'); }
+                  setSavingPort(false);
+                }} disabled={savingPort}
+                  className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold" data-testid="ss-port-save">
+                  {savingPort ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* Backup */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
           <Card className="ll-card border-white/5">
             <CardHeader>
               <CardTitle className="text-base text-white flex items-center gap-2" style={{ fontFamily: 'Outfit' }}>
@@ -248,7 +285,7 @@ export default function SettingsPage() {
 
       {/* TOTP Setup Dialog */}
       <Dialog open={!!totpSetup} onOpenChange={() => setTotpSetup(null)}>
-        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm mx-4">
           <DialogHeader>
             <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('settings.setup2FA')}</DialogTitle>
             <DialogDescription className="text-gray-500 text-sm">Scan this QR code with your authenticator app</DialogDescription>
@@ -285,7 +322,7 @@ export default function SettingsPage() {
 
       {/* Disable 2FA Dialog */}
       <Dialog open={disableOpen} onOpenChange={setDisableOpen}>
-        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm mx-4">
           <DialogHeader>
             <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('settings.disable2FA')}</DialogTitle>
             <DialogDescription className="text-gray-500 text-sm">Enter your current TOTP code to disable 2FA</DialogDescription>

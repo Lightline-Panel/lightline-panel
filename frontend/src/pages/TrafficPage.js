@@ -89,8 +89,8 @@ export default function TrafficPage() {
 
         <TabsContent value="user">
           <Card className="ll-card border-white/5">
-            <CardContent className="p-0">
-              <Table>
+            <CardContent className="p-0 overflow-x-auto">
+              <Table className="min-w-[400px]">
                 <TableHeader>
                   <TableRow className="border-white/5 hover:bg-transparent">
                     <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.username')}</TableHead>

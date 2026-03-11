@@ -1,62 +1,43 @@
 /**
- * Copy text to clipboard with fallback for non-HTTPS contexts.
- * navigator.clipboard.writeText requires a secure context (HTTPS or localhost).
- * The fallback uses a temporary textarea element.
+ * Copy text to clipboard — works on HTTP and HTTPS.
+ * Tries execCommand first (sync, works in click handlers on HTTP),
+ * then Clipboard API, then legacy fallback.
  */
-export async function copyToClipboard(text) {
-  if (!text) return false;
+export function copyToClipboard(text) {
+  if (!text) return Promise.resolve(false);
 
-  // Method 1: Modern Clipboard API (requires HTTPS or localhost)
-  if (navigator.clipboard && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // fall through to fallback
-    }
-  }
-
-  // Method 2: Fallback using textarea + execCommand (works on HTTP)
+  // Method 1: Synchronous execCommand — most reliable in click handlers on HTTP
   try {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.setAttribute('readonly', '');
-    textarea.style.position = 'fixed';
-    textarea.style.left = '0';
-    textarea.style.top = '0';
-    textarea.style.width = '2em';
-    textarea.style.height = '2em';
-    textarea.style.padding = '0';
-    textarea.style.border = 'none';
-    textarea.style.outline = 'none';
-    textarea.style.boxShadow = 'none';
-    textarea.style.background = 'transparent';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    // Must be visible to iOS Safari — use offscreen but not display:none
+    ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0;';
+    document.body.appendChild(ta);
 
-    let ok = false;
-    try {
-      ok = document.execCommand('copy');
-    } catch {
-      ok = false;
+    // iOS Safari needs special range selection
+    if (navigator.userAgent.match(/ipad|iphone/i)) {
+      const range = document.createRange();
+      range.selectNodeContents(ta);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      ta.setSelectionRange(0, text.length);
+    } else {
+      ta.select();
     }
-    document.body.removeChild(textarea);
-    if (ok) return true;
+
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) return Promise.resolve(true);
   } catch {
     // fall through
   }
 
-  // Method 3: window.clipboardData (IE/Edge legacy)
-  try {
-    if (window.clipboardData && window.clipboardData.setData) {
-      window.clipboardData.setData('Text', text);
-      return true;
-    }
-  } catch {
-    // ignore
+  // Method 2: Async Clipboard API (requires HTTPS or localhost, but try anyway)
+  if (navigator.clipboard) {
+    return navigator.clipboard.writeText(text).then(() => true).catch(() => false);
   }
 
-  return false;
+  return Promise.resolve(false);
 }

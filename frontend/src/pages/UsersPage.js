@@ -124,8 +124,8 @@ export default function UsersPage() {
 
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
         <Card className="ll-card border-white/5">
-          <CardContent className="p-0">
-            <Table data-testid="user-table">
+          <CardContent className="p-0 overflow-x-auto">
+            <Table data-testid="user-table" className="min-w-[640px]">
               <TableHeader>
                 <TableRow className="border-white/5 hover:bg-transparent">
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.username')}</TableHead>
@@ -177,8 +177,7 @@ export default function UsersPage() {
                           </DropdownMenuItem>
                           {u.access_url && (
                             <DropdownMenuItem
-                              onSelect={(e) => {
-                                e.preventDefault();
+                              onClick={() => {
                                 copyToClipboard(u.access_url).then(ok => {
                                   if (ok) toast.success('SS URL copied');
                                   else toast.error('Copy failed');
@@ -191,8 +190,7 @@ export default function UsersPage() {
                           )}
                           {u.sub_url && (
                             <DropdownMenuItem
-                              onSelect={(e) => {
-                                e.preventDefault();
+                              onClick={() => {
                                 copyToClipboard(window.location.origin + u.sub_url).then(ok => {
                                   if (ok) toast.success('Sub URL copied');
                                   else toast.error('Copy failed');
@@ -219,7 +217,7 @@ export default function UsersPage() {
 
       {/* Add/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="bg-zinc-950 border-white/10 max-w-md">
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-md mx-4">
           <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{editing ? t('users.editUser') : t('users.addUser')}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Configure VPN user access</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
             <div className="space-y-1.5">
@@ -257,7 +255,7 @@ export default function UsersPage() {
 
       {/* QR Code Dialog */}
       <Dialog open={!!qrUser} onOpenChange={() => setQrUser(null)}>
-        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm mx-4">
           <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('users.qrCode')} — {qrUser?.username}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Scan to connect</DialogDescription></DialogHeader>
           <div className="flex flex-col items-center gap-4 py-4">
             {qrUser?.access_url && (
@@ -293,7 +291,7 @@ export default function UsersPage() {
 
       {/* Switch Node Dialog */}
       <Dialog open={!!switchUser} onOpenChange={() => setSwitchUser(null)}>
-        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm mx-4">
           <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('users.switchNode')} — {switchUser?.username}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Select a new server</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
             <Select value={switchNodeId} onValueChange={setSwitchNodeId}>
@@ -314,7 +312,7 @@ export default function UsersPage() {
 
       {/* Bulk Switch Node Dialog */}
       <Dialog open={bulkSwitchOpen} onOpenChange={setBulkSwitchOpen}>
-        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm mx-4">
           <DialogHeader>
             <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>Switch All Users</DialogTitle>
             <DialogDescription className="text-gray-500 text-sm">

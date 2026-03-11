@@ -50,8 +50,8 @@ export default function AuditLogsPage() {
 
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
         <Card className="ll-card border-white/5">
-          <CardContent className="p-0">
-            <Table data-testid="audit-table">
+          <CardContent className="p-0 overflow-x-auto">
+            <Table data-testid="audit-table" className="min-w-[560px]">
               <TableHeader>
                 <TableRow className="border-white/5 hover:bg-transparent">
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('audit.action')}</TableHead>
