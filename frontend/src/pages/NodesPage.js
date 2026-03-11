@@ -8,16 +8,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, Heart, RefreshCw, Loader2 } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, Heart, RefreshCw, Loader2, Copy, Key } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
+import { copyToClipboard } from '@/lib/clipboard';
 
 export default function NodesPage() {
   const [nodes, setNodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [tokenNode, setTokenNode] = useState(null);
   const [form, setForm] = useState({ name: '', ip: '', ss_port: '8388', country: '' });
   const [saving, setSaving] = useState(false);
   const { t } = useI18n();
@@ -125,6 +127,9 @@ export default function NodesPage() {
                           <DropdownMenuItem onClick={() => openEdit(node)} className="text-gray-300 gap-2">
                             <Pencil className="w-3.5 h-3.5" /> {t('common.edit')}
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setTokenNode(node)} className="text-gray-300 gap-2">
+                            <Key className="w-3.5 h-3.5" /> Node Token
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => healthCheck(node.id)} className="text-gray-300 gap-2">
                             <Heart className="w-3.5 h-3.5" /> {t('nodes.healthCheck')}
                           </DropdownMenuItem>
@@ -181,6 +186,41 @@ export default function NodesPage() {
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : t('common.save')}
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Node Token Dialog */}
+      <Dialog open={!!tokenNode} onOpenChange={() => setTokenNode(null)}>
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>Node Token — {tokenNode?.name}</DialogTitle>
+            <DialogDescription className="text-gray-500 text-sm">Use this token when setting up Lightline Node on a remote server</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="space-y-1.5">
+              <Label className="text-gray-400 text-xs uppercase">Token</Label>
+              <div className="p-3 rounded-lg bg-black/50 border border-white/10 font-mono text-xs text-cyan-400 break-all select-all">
+                {tokenNode?.node_token || 'No token generated'}
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-zinc-900/50 border border-white/5 space-y-2">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider">Node Setup Command</p>
+              <p className="font-mono text-[11px] text-gray-300 break-all">
+                NODE_TOKEN={tokenNode?.node_token}
+              </p>
+            </div>
+            <Button
+              onClick={() => {
+                copyToClipboard(tokenNode?.node_token || '').then(ok => {
+                  if (ok) toast.success('Token copied');
+                  else toast.error('Copy failed');
+                });
+              }}
+              className="w-full bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2"
+            >
+              <Copy className="w-4 h-4" /> Copy Token
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

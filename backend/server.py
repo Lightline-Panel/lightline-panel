@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy import select, func, desc, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,9 @@ import base64
 import logging
 import secrets
 import hashlib
+import hmac
+import struct
+import time as _time
 import platform
 import uuid
 from pathlib import Path
@@ -35,6 +38,33 @@ api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ===== HMAC-Signed License Keys =====
+LICENSE_SECRET = os.environ.get('LICENSE_SECRET', 'lightline-hmac-2024-secure-key').encode()
+
+
+def verify_license_key(key: str) -> dict | None:
+    """Verify an HMAC-signed license key. Returns decoded info or None."""
+    try:
+        parts = key.replace("LL-", "").replace("-", "")
+        if len(parts) != 40:
+            return None
+        raw = bytes.fromhex(parts)
+        payload, sig = raw[:12], raw[12:20]
+        expected = hmac.new(LICENSE_SECRET, payload, hashlib.sha256).digest()[:8]
+        if not hmac.compare_digest(sig, expected):
+            return None
+        created, expire_days, max_servers = struct.unpack('>IIH', payload[:10])
+        expire_ts = created + expire_days * 86400
+        return {
+            "created": created,
+            "expire_days": expire_days,
+            "max_servers": max_servers,
+            "expired": _time.time() > expire_ts,
+            "expires_in_days": max(0, int((expire_ts - _time.time()) / 86400)),
+        }
+    except Exception:
+        return None
 
 
 # ===== Pydantic Schemas =====
@@ -101,10 +131,6 @@ class LoginTOTPRequest(BaseModel):
 class LicenseActivate(BaseModel):
     license_key: str
 
-class LicenseCreate(BaseModel):
-    expire_days: int = 30
-    max_servers: int = 1
-
 class TOTPConfirmRequest(BaseModel):
     secret: str
     code: str
@@ -120,14 +146,23 @@ async def root():
 async def check_setup(db: AsyncSession = Depends(get_db)):
     admin_count = (await db.execute(select(func.count(Admin.id)))).scalar()
     lic = (await db.execute(select(License).where(License.status == 'active').limit(1))).scalar_one_or_none()
+    lic_info = None
+    if lic:
+        expire_date = lic.created_at + timedelta(days=lic.expire_days)
+        lic_info = {"expires_in_days": max(0, (expire_date - datetime.now(timezone.utc)).days), "key": lic.license_key[:16] + "..."}
     return {
         "setup_required": admin_count == 0,
         "license_active": lic is not None,
+        "license_info": lic_info,
         "message": "Create admin via CLI: docker exec -it lightline-backend python cli.py admin create" if admin_count == 0 else None
     }
 
 @api_router.post("/auth/login")
 async def login(req: LoginTOTPRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    # License gate — reject login if no active license
+    lic = (await db.execute(select(License).where(License.status == 'active').limit(1))).scalar_one_or_none()
+    if not lic:
+        raise HTTPException(403, "No active license. Please activate a license key first.")
     result = await db.execute(select(Admin).where(Admin.username == req.username))
     admin = result.scalar_one_or_none()
     if not admin or not verify_password(req.password, admin.password_hash):
@@ -310,6 +345,7 @@ async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends
         result.append({
             "id": n.id, "name": n.name, "ip": n.ip,
             "ss_port": n.ss_port or 8388,
+            "node_token": n.api_key or "",
             "country": n.country, "status": n.status,
             "last_heartbeat": n.last_heartbeat.isoformat() if n.last_heartbeat else None,
             "created_at": n.created_at.isoformat(), "user_count": uc
@@ -318,7 +354,9 @@ async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends
 
 @api_router.post("/nodes")
 async def create_node(req: NodeCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    node = Node(name=req.name, ip=req.ip, ss_port=req.ss_port, country=req.country, status='online')
+    node_token = secrets.token_urlsafe(32)
+    node = Node(name=req.name, ip=req.ip, ss_port=req.ss_port, country=req.country,
+                api_key=node_token, status='online')
     db.add(node)
     await db.flush()
     node.last_heartbeat = datetime.now(timezone.utc)
@@ -326,7 +364,7 @@ async def create_node(req: NodeCreate, request: Request, admin=Depends(get_curre
                     details=f'Node "{req.name}" ({req.country}) added — SS port {req.ss_port}',
                     ip_address=request.client.host if request.client else None))
     await cache_delete('dashboard')
-    return {"id": node.id, "name": node.name, "status": node.status}
+    return {"id": node.id, "name": node.name, "status": node.status, "node_token": node_token}
 
 @api_router.put("/nodes/{node_id}")
 async def update_node(node_id: int, req: NodeUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
@@ -387,11 +425,13 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
         node_name = None
         if u.assigned_node_id:
             node_name = (await db.execute(select(Node.name).where(Node.id == u.assigned_node_id))).scalar_one_or_none()
+        sub_path = f"/api/sub/{u.access_token}" if u.access_token else None
         result.append({
             "id": u.id, "username": u.username, "traffic_limit": u.traffic_limit,
             "expire_date": u.expire_date.isoformat() if u.expire_date else None,
             "assigned_node_id": u.assigned_node_id, "node_name": node_name,
             "access_url": u.access_url or u.ss_url,
+            "sub_url": sub_path,
             "status": u.status, "created_at": u.created_at.isoformat(), "traffic_used": traffic
         })
     return result
@@ -548,19 +588,6 @@ async def get_licenses(admin=Depends(get_current_admin), db: AsyncSession = Depe
         "activated_servers": l.activated_servers, "server_fingerprint": l.server_fingerprint
     } for l in lics]
 
-@api_router.post("/licenses")
-async def create_license(req: LicenseCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    key = f"LL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
-    lic = License(license_key=key, expire_days=req.expire_days, max_servers=req.max_servers,
-                  activated_servers=0, status='active')
-    db.add(lic)
-    db.add(AuditLog(admin_id=int(admin["sub"]), action='license_created',
-                    details=f'License created: {key}',
-                    ip_address=request.client.host if request.client else None))
-    await db.flush()
-    return {"id": lic.id, "license_key": lic.license_key, "expire_days": lic.expire_days,
-            "max_servers": lic.max_servers, "status": lic.status}
-
 @api_router.delete("/licenses/{license_id}")
 async def revoke_license(license_id: int, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     lic = (await db.execute(select(License).where(License.id == license_id))).scalar_one_or_none()
@@ -590,32 +617,64 @@ async def validate_license(req: LicenseValidate, db: AsyncSession = Depends(get_
 
 @api_router.post("/licenses/activate")
 async def activate_license(req: LicenseActivate, request: Request, db: AsyncSession = Depends(get_db)):
-    lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
-    if not lic:
-        return {"activated": False, "reason": "License key not found"}
-    if lic.status != 'active':
-        return {"activated": False, "reason": f"License is {lic.status}"}
-    expire_date = lic.created_at + timedelta(days=lic.expire_days)
-    if datetime.now(timezone.utc) > expire_date:
-        lic.status = 'expired'
-        return {"activated": False, "reason": "License expired"}
+    # Verify HMAC signature of the license key
+    info = verify_license_key(req.license_key)
+    if not info:
+        return {"activated": False, "reason": "Invalid license key"}
+    if info["expired"]:
+        return {"activated": False, "reason": "License key has expired"}
+
     fingerprint = get_server_fingerprint()
-    if lic.server_fingerprint and lic.server_fingerprint != fingerprint:
-        return {"activated": False, "reason": "License bound to a different server"}
-    if not lic.server_fingerprint:
-        if lic.activated_servers >= lic.max_servers:
-            return {"activated": False, "reason": "Maximum activations reached"}
+
+    # Check if this key is already stored
+    lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
+    if lic:
+        if lic.status == 'active':
+            return {"activated": True, "reason": "License already active",
+                    "expires_in_days": info["expires_in_days"], "fingerprint": fingerprint}
+        if lic.status == 'revoked':
+            return {"activated": False, "reason": "License has been revoked"}
+
+    # Check max_servers across all active licenses with same fingerprint
+    if not lic:
+        lic = License(
+            license_key=req.license_key,
+            expire_days=info["expire_days"],
+            max_servers=info["max_servers"],
+            activated_servers=1,
+            status='active',
+            server_fingerprint=fingerprint,
+        )
+        db.add(lic)
+    else:
+        lic.status = 'active'
         lic.server_fingerprint = fingerprint
-        lic.activated_servers += 1
+        lic.activated_servers = 1
+
     db.add(AuditLog(admin_id=None, action='license_activated',
                     details=f'License activated: {req.license_key[:16]}...',
                     ip_address=request.client.host if request.client else None))
-    return {"activated": True, "expires_in_days": (expire_date - datetime.now(timezone.utc)).days,
+    return {"activated": True, "expires_in_days": info["expires_in_days"],
             "fingerprint": fingerprint}
 
 @api_router.get("/system/health")
 async def system_health():
     return {"status": "ok", "version": "1.0.0"}
+
+
+# ===== Subscription (ssconf) Endpoint =====
+
+@api_router.get("/sub/{access_token}")
+async def get_subscription(access_token: str, db: AsyncSession = Depends(get_db)):
+    """Return current ss:// URL for a user. Used by ssconf:// protocol in Outline clients."""
+    user = (await db.execute(select(VPNUser).where(VPNUser.access_token == access_token))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "Not found")
+    if user.status != 'active':
+        raise HTTPException(403, "Account suspended")
+    if not user.access_url:
+        raise HTTPException(404, "No access URL configured")
+    return PlainTextResponse(user.access_url, media_type="text/plain")
 
 
 # ===== Audit Logs =====
@@ -733,10 +792,22 @@ async def startup():
     async with async_session() as session:
         admin_count = (await session.execute(select(func.count(Admin.id)))).scalar()
         lic = (await session.execute(select(License).where(License.status == 'active').limit(1))).scalar_one_or_none()
+        node_count = (await session.execute(select(func.count(Node.id)))).scalar()
         if admin_count == 0:
             logger.warning("No admin account found. Create one with: docker exec -it lightline-backend python cli.py admin create")
         if not lic:
-            logger.warning("No active license. Create one with: docker exec -it lightline-backend python cli.py license create")
+            logger.warning("No active license. Activate with: docker exec -it lightline-backend python cli.py license activate <KEY>")
+        # Auto-create default local node if none exist
+        if node_count == 0:
+            server_ip = os.environ.get('SERVER_IP', '127.0.0.1')
+            ss_port = int(os.environ.get('SS_PORT', '8388'))
+            node_token = secrets.token_urlsafe(32)
+            node = Node(name='Main Server', ip=server_ip, ss_port=ss_port,
+                        api_key=node_token, country='Local', status='online')
+            node.last_heartbeat = datetime.now(timezone.utc)
+            session.add(node)
+            await session.commit()
+            logger.info(f"Default node 'Main Server' created (IP: {server_ip}, SS port: {ss_port})")
     asyncio.create_task(check_all_nodes_health())
     asyncio.create_task(license_heartbeat())
     logger.info("Lightline VPN Panel started")

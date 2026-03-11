@@ -7,6 +7,9 @@ import os
 import getpass
 import secrets
 import hashlib
+import hmac
+import struct
+import time as _time
 import platform
 import uuid
 from pathlib import Path
@@ -20,14 +23,36 @@ from database import async_session, engine, Base
 from models import Admin, License
 from auth import hash_password
 
+LICENSE_SECRET = os.environ.get('LICENSE_SECRET', 'lightline-hmac-2024-secure-key').encode()
+
 
 def get_server_fingerprint() -> str:
     raw = f"{platform.node()}-{platform.machine()}-{uuid.getnode()}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def generate_license_key() -> str:
-    return f"LL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+def verify_license_key(key: str) -> dict | None:
+    """Verify an HMAC-signed license key."""
+    try:
+        parts = key.replace("LL-", "").replace("-", "")
+        if len(parts) != 40:
+            return None
+        raw = bytes.fromhex(parts)
+        payload, sig = raw[:12], raw[12:20]
+        expected = hmac.new(LICENSE_SECRET, payload, hashlib.sha256).digest()[:8]
+        if not hmac.compare_digest(sig, expected):
+            return None
+        created, expire_days, max_servers = struct.unpack('>IIH', payload[:10])
+        expire_ts = created + expire_days * 86400
+        return {
+            "created": created,
+            "expire_days": expire_days,
+            "max_servers": max_servers,
+            "expired": _time.time() > expire_ts,
+            "expires_in_days": max(0, int((expire_ts - _time.time()) / 86400)),
+        }
+    except Exception:
+        return None
 
 
 async def init_db():
@@ -99,39 +124,8 @@ async def cmd_admin_reset(username: str = None, password: str = None):
             print(f"[OK] Admin '{username}' created")
 
 
-async def cmd_license_create(expire_days: int = None, max_servers: int = None):
-    """Create a new license key."""
-    await init_db()
-    print()
-    print("  Lightline VPN Panel — Create License Key")
-    print("  " + "=" * 42)
-    print()
-
-    if expire_days is None:
-        val = input("  Expire days [30]: ").strip()
-        expire_days = int(val) if val else 30
-    if max_servers is None:
-        val = input("  Max servers [1]: ").strip()
-        max_servers = int(val) if val else 1
-
-    key = generate_license_key()
-    async with async_session() as session:
-        lic = License(license_key=key, expire_days=expire_days, max_servers=max_servers,
-                      activated_servers=0, status='active')
-        session.add(lic)
-        await session.commit()
-
-    print()
-    print(f"  [OK] License created successfully")
-    print()
-    print(f"    Key:         {key}")
-    print(f"    Expire days: {expire_days}")
-    print(f"    Max servers: {max_servers}")
-    print()
-
-
 async def cmd_activate_license(key: str = None):
-    """Activate a license key on this server."""
+    """Activate an HMAC-signed license key on this server."""
     await init_db()
 
     if not key:
@@ -141,7 +135,16 @@ async def cmd_activate_license(key: str = None):
         print()
         key = input("  License key: ").strip()
     if not key:
-        print("[ERROR] License key cannot be empty")
+        print("  [ERROR] License key cannot be empty")
+        return
+
+    # Verify HMAC signature
+    info = verify_license_key(key)
+    if not info:
+        print("  [ERROR] Invalid license key (signature verification failed)")
+        return
+    if info["expired"]:
+        print("  [ERROR] License key has expired")
         return
 
     fingerprint = get_server_fingerprint()
@@ -150,30 +153,30 @@ async def cmd_activate_license(key: str = None):
         lic = (await session.execute(
             select(License).where(License.license_key == key)
         )).scalar_one_or_none()
+        if lic and lic.status == 'revoked':
+            print("  [ERROR] License has been revoked")
+            return
         if not lic:
-            print(f"  [ERROR] License key not found. Create one first with: python cli.py license create")
-            return
-        if lic.status != 'active':
-            print(f"  [ERROR] License is {lic.status}")
-            return
-        expire_date = lic.created_at + timedelta(days=lic.expire_days)
-        if lic.expire_days > 0 and datetime.now(timezone.utc) > expire_date:
-            print("  [ERROR] License expired")
-            return
-        if not lic.server_fingerprint:
-            lic.server_fingerprint = fingerprint
-            lic.activated_servers += 1
-            await session.commit()
-            print(f"  [OK] License activated on this server")
-        elif lic.server_fingerprint == fingerprint:
-            print(f"  [OK] License already active on this server")
+            lic = License(
+                license_key=key, expire_days=info["expire_days"],
+                max_servers=info["max_servers"], activated_servers=1,
+                status='active', server_fingerprint=fingerprint,
+            )
+            session.add(lic)
         else:
-            print(f"  [ERROR] License bound to a different server")
-            return
-        days_left = (expire_date - datetime.now(timezone.utc)).days if lic.expire_days > 0 else 'unlimited'
-        print(f"    Key:         {lic.license_key}")
-        print(f"    Expires in:  {days_left} days")
-        print(f"    Fingerprint: {fingerprint}")
+            lic.status = 'active'
+            lic.server_fingerprint = fingerprint
+            lic.activated_servers = 1
+        await session.commit()
+
+    print()
+    print(f"  [OK] License activated on this server")
+    print()
+    print(f"    Key:         {key[:24]}...")
+    print(f"    Expires in:  {info['expires_in_days']} days")
+    print(f"    Max servers: {info['max_servers']}")
+    print(f"    Fingerprint: {fingerprint}")
+    print()
 
 
 async def cmd_show_license():
@@ -183,7 +186,7 @@ async def cmd_show_license():
             select(License).order_by(License.created_at.desc())
         )).scalars().all()
         if not lics:
-            print("[INFO] No licenses found. Create one with: python cli.py license create")
+            print("[INFO] No licenses found. Activate one with: python cli.py license activate <KEY>")
             return
         print()
         for lic in lics:
@@ -211,8 +214,7 @@ def print_usage():
     print("  Commands:")
     print("    admin create                           Create a new admin account (interactive)")
     print("    admin reset [--user U] [--pass P]      Reset admin password")
-    print("    license create [--days N] [--servers N] Create a new license key")
-    print("    license activate [KEY]                 Activate a license key on this server")
+    print("    license activate [KEY]                 Activate an HMAC-signed license key")
     print("    license show                           Show all licenses")
     print("    fingerprint                            Show this server's fingerprint")
     print()
@@ -253,19 +255,7 @@ def main():
             print_usage()
             return
         sub = args[1]
-        if sub == 'create':
-            expire_days = None
-            max_servers = None
-            i = 2
-            while i < len(args):
-                if args[i] == '--days' and i + 1 < len(args):
-                    expire_days = int(args[i + 1]); i += 2
-                elif args[i] == '--servers' and i + 1 < len(args):
-                    max_servers = int(args[i + 1]); i += 2
-                else:
-                    i += 1
-            asyncio.run(cmd_license_create(expire_days, max_servers))
-        elif sub == 'activate':
+        if sub == 'activate':
             key = args[2] if len(args) > 2 else None
             asyncio.run(cmd_activate_license(key))
         elif sub == 'show':
