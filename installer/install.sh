@@ -180,6 +180,13 @@ log "Starting PostgreSQL, Redis, backend, and frontend..."
 $COMPOSE_CMD up -d 2>&1
 ok "All services started"
 
+# Install the lightline CLI command
+log "Installing 'lightline' command..."
+if [ -f "$INSTALL_DIR/lightline.sh" ]; then
+  install -m 755 "$INSTALL_DIR/lightline.sh" /usr/local/bin/lightline
+  ok "'lightline' command installed — type 'lightline' to manage your panel"
+fi
+
 echo ""
 log "═══════════════════════════════════════════════"
 log "  Step 5/5: Waiting for backend health check"
@@ -218,16 +225,14 @@ echo -e "  Default login (mock mode):"
 echo -e "    Username: ${YELLOW}admin${NC}"
 echo -e "    Password: ${YELLOW}admin123${NC}"
 echo ""
-echo -e "  Useful commands:"
-echo -e "    ${CYAN}cd $INSTALL_DIR && $COMPOSE_CMD logs -f${NC}        — View logs"
-echo -e "    ${CYAN}cd $INSTALL_DIR && $COMPOSE_CMD restart${NC}        — Restart"
-echo -e "    ${CYAN}cd $INSTALL_DIR && $COMPOSE_CMD down${NC}           — Stop"
-echo -e "    ${CYAN}cd $INSTALL_DIR && $COMPOSE_CMD up -d --build${NC}  — Rebuild"
-echo ""
-echo -e "  License management:"
-echo -e "    ${CYAN}$COMPOSE_CMD exec backend python cli.py license generate${NC}"
-echo -e "    ${CYAN}$COMPOSE_CMD exec backend python cli.py license activate <KEY>${NC}"
-echo -e "    ${CYAN}$COMPOSE_CMD exec backend python cli.py license show${NC}"
+echo -e "  Commands (type ${CYAN}lightline${NC} to see all):"
+echo -e "    ${CYAN}lightline status${NC}              — Service status"
+echo -e "    ${CYAN}lightline logs${NC}                — View logs"
+echo -e "    ${CYAN}lightline restart${NC}             — Restart services"
+echo -e "    ${CYAN}lightline admin create${NC}        — Create admin account"
+echo -e "    ${CYAN}lightline license activate <K>${NC} — Activate license"
+echo -e "    ${CYAN}lightline update${NC}              — Update panel"
+echo -e "    ${CYAN}lightline uninstall${NC}           — Remove panel"
 echo ""
 echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
 echo ""
