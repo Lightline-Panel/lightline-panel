@@ -133,12 +133,12 @@ export default function LicensePage() {
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('licenses.expireDays')}</Label>
               <Input type="number" value={form.expire_days} onChange={(e) => setForm({ ...form, expire_days: e.target.value })}
-                className="bg-black/50 border-white/10" data-testid="license-days-input" />
+                className="bg-black/50 border-white/10 text-gray-200" data-testid="license-days-input" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('licenses.maxServers')}</Label>
               <Input type="number" value={form.max_servers} onChange={(e) => setForm({ ...form, max_servers: e.target.value })}
-                className="bg-black/50 border-white/10" data-testid="license-servers-input" />
+                className="bg-black/50 border-white/10 text-gray-200" data-testid="license-servers-input" />
             </div>
             <div className="flex gap-3 pt-2">
               <Button variant="ghost" onClick={() => setCreateOpen(false)} className="flex-1 text-gray-400">{t('common.cancel')}</Button>
@@ -158,7 +158,7 @@ export default function LicensePage() {
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('licenses.licenseKey')}</Label>
               <Input value={validateKey} onChange={(e) => setValidateKey(e.target.value)} placeholder="LL-XXXX-XXXX-XXXX-XXXX"
-                className="bg-black/50 border-white/10 font-mono text-xs" data-testid="validate-key-input" />
+                className="bg-black/50 border-white/10 font-mono text-xs text-gray-200" data-testid="validate-key-input" />
             </div>
             <Button onClick={handleValidate} className="w-full bg-cyan-600 hover:bg-cyan-500 text-black font-semibold" data-testid="validate-submit">{t('licenses.validate')}</Button>
             {validateResult && (

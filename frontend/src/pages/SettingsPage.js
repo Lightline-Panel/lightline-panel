@@ -75,13 +75,13 @@ export default function SettingsPage() {
                   <Globe className="w-3.5 h-3.5" /> {t('settings.language')}
                 </Label>
                 <Select value={lang} onValueChange={setLang}>
-                  <SelectTrigger className="bg-black/50 border-white/10" data-testid="settings-language-select">
+                  <SelectTrigger className="bg-black/50 border-white/10 text-gray-200" data-testid="settings-language-select">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="bg-zinc-950 border-white/10">
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="ru">Русский</SelectItem>
-                    <SelectItem value="tk">Türkmen</SelectItem>
+                  <SelectContent className="bg-zinc-950 border-white/10 text-gray-200">
+                    <SelectItem value="en" className="text-gray-200 focus:text-white focus:bg-cyan-900/30">English</SelectItem>
+                    <SelectItem value="ru" className="text-gray-200 focus:text-white focus:bg-cyan-900/30">Русский</SelectItem>
+                    <SelectItem value="tk" className="text-gray-200 focus:text-white focus:bg-cyan-900/30">Türkmen</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

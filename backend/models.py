@@ -42,6 +42,8 @@ class VPNUser(Base):
     assigned_node_id = Column(Integer, ForeignKey('nodes.id', ondelete='SET NULL'), nullable=True)
     outline_key_id = Column(String(100), nullable=True)
     access_url = Column(Text, nullable=True)
+    ss_url = Column(Text, nullable=True)
+    access_token = Column(String(64), unique=True, nullable=True)
     status = Column(String(20), default='active')
     created_at = Column(TZDateTime, default=lambda: datetime.now(timezone.utc))
     node = relationship('Node', backref='vpn_users')

@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy import select, func, desc, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,6 +84,9 @@ class UserUpdate(BaseModel):
 class SwitchNodeRequest(BaseModel):
     node_id: int
 
+class BulkSwitchNodeRequest(BaseModel):
+    node_id: int
+
 class LicenseCreate(BaseModel):
     expire_days: int = 30
     max_servers: int = 1
@@ -147,6 +151,28 @@ async def get_me(admin=Depends(get_current_admin), db: AsyncSession = Depends(ge
     if not a:
         raise HTTPException(404, "Admin not found")
     return {"id": a.id, "username": a.username, "role": a.role, "created_at": a.created_at.isoformat()}
+
+
+# ===== Public Access Endpoint (ssconf:// subscription) =====
+
+def _build_ssconf_url(request: Request, access_token: str) -> str:
+    """Build ssconf:// URL from the request host"""
+    host = request.headers.get('x-forwarded-host') or request.headers.get('host') or 'localhost'
+    return f"ssconf://{host}/api/access/{access_token}"
+
+@api_router.get("/access/{access_token}", response_class=PlainTextResponse)
+async def get_access_config(access_token: str, db: AsyncSession = Depends(get_db)):
+    """Public endpoint: Outline clients fetch current SS config via ssconf:// URL"""
+    user = (await db.execute(
+        select(VPNUser).where(VPNUser.access_token == access_token)
+    )).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "Access key not found")
+    if user.status != 'active':
+        raise HTTPException(403, "Access key disabled")
+    if not user.ss_url:
+        raise HTTPException(404, "No active connection config")
+    return PlainTextResponse(user.ss_url, media_type="text/plain")
 
 
 # ===== Dashboard =====
@@ -294,6 +320,7 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
             "expire_date": u.expire_date.isoformat() if u.expire_date else None,
             "assigned_node_id": u.assigned_node_id, "node_name": node_name,
             "outline_key_id": u.outline_key_id, "access_url": u.access_url,
+            "ss_url": u.ss_url, "access_token": u.access_token,
             "status": u.status, "created_at": u.created_at.isoformat(), "traffic_used": traffic
         })
     return result
@@ -303,13 +330,15 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
     existing = (await db.execute(select(VPNUser).where(VPNUser.username == req.username))).scalar_one_or_none()
     if existing:
         raise HTTPException(400, "Username already exists")
+    token = secrets.token_urlsafe(32)
     user = VPNUser(
         username=req.username,
         password_hash=hash_password(req.password) if req.password else None,
         traffic_limit=req.traffic_limit or 0,
         device_limit=req.device_limit or 1,
         expire_date=datetime.fromisoformat(req.expire_date) if req.expire_date else None,
-        assigned_node_id=req.assigned_node_id, status='active'
+        assigned_node_id=req.assigned_node_id, status='active',
+        access_token=token
     )
     db.add(user)
     await db.flush()
@@ -319,9 +348,12 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
             client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
             key_data = await client.create_access_key(name=req.username)
             user.outline_key_id = key_data.get('id')
-            user.access_url = key_data.get('accessUrl')
+            user.ss_url = key_data.get('accessUrl')
+            user.access_url = _build_ssconf_url(request, token)
             if req.traffic_limit and req.traffic_limit > 0:
                 await client.set_data_limit(key_data['id'], req.traffic_limit)
+    else:
+        user.access_url = _build_ssconf_url(request, token)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_created',
                     details=f'VPN user "{req.username}" created',
                     ip_address=request.client.host if request.client else None))
@@ -379,11 +411,50 @@ async def switch_node(user_id: int, req: SwitchNodeRequest, request: Request, ad
     key_data = await new_client.create_access_key(name=user.username)
     user.assigned_node_id = req.node_id
     user.outline_key_id = key_data.get('id')
-    user.access_url = key_data.get('accessUrl')
+    user.ss_url = key_data.get('accessUrl')
+    if not user.access_token:
+        user.access_token = secrets.token_urlsafe(32)
+    if not user.access_url or not user.access_url.startswith('ssconf://'):
+        user.access_url = _build_ssconf_url(request, user.access_token)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_node_switched',
                     details=f'User "{user.username}" switched to "{new_node.name}"',
                     ip_address=request.client.host if request.client else None))
     return {"message": "Node switched", "access_url": user.access_url}
+
+@api_router.post("/users/bulk-switch-node")
+async def bulk_switch_node(req: BulkSwitchNodeRequest, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    """Switch ALL active users with assigned nodes to a new target node"""
+    new_node = (await db.execute(select(Node).where(Node.id == req.node_id))).scalar_one_or_none()
+    if not new_node:
+        raise HTTPException(404, "Target node not found")
+    if new_node.status != 'online':
+        raise HTTPException(400, "Target node is not online")
+    users = (await db.execute(
+        select(VPNUser).where(VPNUser.status == 'active', VPNUser.assigned_node_id.isnot(None), VPNUser.assigned_node_id != req.node_id)
+    )).scalars().all()
+    switched = 0
+    new_client = OutlineClient(f"https://{new_node.ip}:{new_node.api_port}", new_node.api_key)
+    for user in users:
+        try:
+            if user.outline_key_id and user.assigned_node_id:
+                old_node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+                if old_node:
+                    await OutlineClient(f"https://{old_node.ip}:{old_node.api_port}", old_node.api_key).delete_access_key(user.outline_key_id)
+            key_data = await new_client.create_access_key(name=user.username)
+            user.assigned_node_id = req.node_id
+            user.outline_key_id = key_data.get('id')
+            user.ss_url = key_data.get('accessUrl')
+            if not user.access_token:
+                user.access_token = secrets.token_urlsafe(32)
+            if not user.access_url or not user.access_url.startswith('ssconf://'):
+                user.access_url = _build_ssconf_url(request, user.access_token)
+            switched += 1
+        except Exception as e:
+            logger.error(f"Bulk switch error for user {user.username}: {e}")
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='bulk_node_switch',
+                    details=f'{switched} users switched to "{new_node.name}"',
+                    ip_address=request.client.host if request.client else None))
+    return {"message": f"{switched} users switched to {new_node.name}", "switched": switched}
 
 
 # ===== Traffic Routes =====
@@ -591,12 +662,16 @@ async def seed_mock_data():
         users = []
         for uname in usernames:
             nd = random.choice(nodes)
+            token = secrets.token_urlsafe(32)
+            ss_raw = f"ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwYXNz@{nd.ip}:8388/?outline=1#{uname}"
             u = VPNUser(username=uname, password_hash=hash_password('password'),
                         traffic_limit=random.choice([0, 5_000_000_000, 10_000_000_000, 50_000_000_000]),
                         device_limit=random.choice([1, 2, 3, 5]),
                         expire_date=datetime.now(timezone.utc) + timedelta(days=random.randint(10, 90)),
                         assigned_node_id=nd.id, outline_key_id=str(random.randint(1000, 9999)),
-                        access_url=f"ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwYXNz@{nd.ip}:8388/?outline=1#{uname}",
+                        ss_url=ss_raw,
+                        access_token=token,
+                        access_url=f"ssconf://lightline.local/api/access/{token}",
                         status='active')
             session.add(u)
             users.append(u)

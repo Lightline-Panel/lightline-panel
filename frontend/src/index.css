@@ -75,6 +75,31 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  .dark body {
+    color-scheme: dark;
+  }
+
+  /* Force light text on all form elements in dark mode */
+  .dark input,
+  .dark textarea,
+  .dark select,
+  .dark [role="option"],
+  .dark [role="combobox"],
+  .dark [role="listbox"] {
+    color: hsl(var(--foreground));
+  }
+
+  .dark input::placeholder,
+  .dark textarea::placeholder {
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* Fix select items, dropdown items default visibility */
+  .dark [role="menuitem"],
+  .dark [data-radix-collection-item] {
+    color: hsl(var(--popover-foreground));
+  }
+
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Outfit', sans-serif;
   }

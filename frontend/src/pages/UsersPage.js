@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import QRCode from 'react-qr-code';
@@ -34,6 +34,9 @@ export default function UsersPage() {
   const [form, setForm] = useState({ username: '', password: '', traffic_limit: '0', device_limit: '1', expire_date: '', assigned_node_id: '' });
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
+  const [bulkSwitchOpen, setBulkSwitchOpen] = useState(false);
+  const [bulkNodeId, setBulkNodeId] = useState('');
+  const [bulkSwitching, setBulkSwitching] = useState(false);
   const { t } = useI18n();
 
   const fetchData = async () => {
@@ -88,6 +91,17 @@ export default function UsersPage() {
     } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
   };
 
+  const handleBulkSwitch = async () => {
+    if (!bulkNodeId) return;
+    setBulkSwitching(true);
+    try {
+      const { data } = await api.post('/users/bulk-switch-node', { node_id: parseInt(bulkNodeId) });
+      toast.success(data.message);
+      setBulkSwitchOpen(false); setBulkNodeId(''); fetchData();
+    } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
+    setBulkSwitching(false);
+  };
+
   const filtered = users.filter(u => u.username.toLowerCase().includes(search.toLowerCase()));
 
   return (
@@ -99,7 +113,11 @@ export default function UsersPage() {
         </div>
         <div className="flex items-center gap-3 w-full sm:w-auto">
           <Input placeholder={t('common.search')} value={search} onChange={(e) => setSearch(e.target.value)}
-            className="bg-black/50 border-white/10 h-9 text-sm w-full sm:w-48" data-testid="user-search-input" />
+            className="bg-black/50 border-white/10 h-9 text-sm text-gray-200 w-full sm:w-48" data-testid="user-search-input" />
+          <Button variant="outline" onClick={() => { setBulkSwitchOpen(true); setBulkNodeId(''); }}
+            className="border-white/10 text-gray-300 gap-2 whitespace-nowrap" data-testid="bulk-switch-button">
+            <Users className="w-4 h-4" /> Switch All
+          </Button>
           <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 whitespace-nowrap" data-testid="add-user-button">
             <Plus className="w-4 h-4" /> {t('users.addUser')}
           </Button>
@@ -185,34 +203,34 @@ export default function UsersPage() {
           <div className="space-y-4 mt-2">
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('users.username')}</Label>
-              <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="bg-black/50 border-white/10" data-testid="user-name-input" />
+              <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-name-input" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('users.password')}</Label>
-              <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder={editing ? '(unchanged)' : ''} className="bg-black/50 border-white/10" data-testid="user-password-input" />
+              <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder={editing ? '(unchanged)' : ''} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-password-input" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-gray-400 text-xs uppercase">{t('users.trafficLimit')}</Label>
-                <Input type="number" value={form.traffic_limit} onChange={(e) => setForm({ ...form, traffic_limit: e.target.value })} className="bg-black/50 border-white/10" data-testid="user-traffic-input" />
+                <Input type="number" value={form.traffic_limit} onChange={(e) => setForm({ ...form, traffic_limit: e.target.value })} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-traffic-input" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-gray-400 text-xs uppercase">{t('users.deviceLimit')}</Label>
-                <Input type="number" value={form.device_limit} onChange={(e) => setForm({ ...form, device_limit: e.target.value })} className="bg-black/50 border-white/10" data-testid="user-device-input" />
+                <Input type="number" value={form.device_limit} onChange={(e) => setForm({ ...form, device_limit: e.target.value })} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-device-input" />
               </div>
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('users.expireDate')}</Label>
-              <Input type="date" value={form.expire_date} onChange={(e) => setForm({ ...form, expire_date: e.target.value })} className="bg-black/50 border-white/10" data-testid="user-expire-input" />
+              <Input type="date" value={form.expire_date} onChange={(e) => setForm({ ...form, expire_date: e.target.value })} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-expire-input" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('users.assignedNode')}</Label>
               <Select value={form.assigned_node_id} onValueChange={(v) => setForm({ ...form, assigned_node_id: v })}>
-                <SelectTrigger className="bg-black/50 border-white/10" data-testid="user-node-select">
+                <SelectTrigger className="bg-black/50 border-white/10 text-gray-200" data-testid="user-node-select">
                   <SelectValue placeholder="Select node..." />
                 </SelectTrigger>
-                <SelectContent className="bg-zinc-950 border-white/10">
-                  {nodes.map(n => <SelectItem key={n.id} value={String(n.id)}>{n.name} ({n.country})</SelectItem>)}
+                <SelectContent className="bg-zinc-950 border-white/10 text-gray-200">
+                  {nodes.map(n => <SelectItem key={n.id} value={String(n.id)} className="text-gray-200 focus:text-white focus:bg-cyan-900/30">{n.name} ({n.country})</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -236,9 +254,12 @@ export default function UsersPage() {
                 <QRCode value={qrUser.access_url} size={200} data-testid="qr-code" />
               </div>
             )}
-            <p className="font-mono text-[10px] text-gray-500 text-center break-all max-w-full px-4">{qrUser?.access_url}</p>
+            <div className="w-full space-y-2 px-2">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Subscription URL (ssconf://)</p>
+              <p className="font-mono text-[10px] text-cyan-400 text-center break-all max-w-full bg-black/50 rounded-lg p-2 border border-white/5">{qrUser?.access_url}</p>
+            </div>
             <Button variant="ghost" size="sm" onClick={() => { navigator.clipboard.writeText(qrUser?.access_url || ''); toast.success('Copied'); }} className="text-cyan-400 gap-2">
-              <Copy className="w-3.5 h-3.5" /> Copy Access URL
+              <Copy className="w-3.5 h-3.5" /> Copy Subscription URL
             </Button>
           </div>
         </DialogContent>
@@ -250,16 +271,53 @@ export default function UsersPage() {
           <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('users.switchNode')} — {switchUser?.username}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Select a new server</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
             <Select value={switchNodeId} onValueChange={setSwitchNodeId}>
-              <SelectTrigger className="bg-black/50 border-white/10" data-testid="switch-node-select">
+              <SelectTrigger className="bg-black/50 border-white/10 text-gray-200" data-testid="switch-node-select">
                 <SelectValue placeholder="Select target node..." />
               </SelectTrigger>
-              <SelectContent className="bg-zinc-950 border-white/10">
-                {nodes.filter(n => n.status === 'online').map(n => <SelectItem key={n.id} value={String(n.id)}>{n.name} ({n.country})</SelectItem>)}
+              <SelectContent className="bg-zinc-950 border-white/10 text-gray-200">
+                {nodes.filter(n => n.status === 'online').map(n => <SelectItem key={n.id} value={String(n.id)} className="text-gray-200 focus:text-white focus:bg-cyan-900/30">{n.name} ({n.country})</SelectItem>)}
               </SelectContent>
             </Select>
             <div className="flex gap-3">
               <Button variant="ghost" onClick={() => setSwitchUser(null)} className="flex-1 text-gray-400">{t('common.cancel')}</Button>
               <Button onClick={handleSwitch} disabled={!switchNodeId} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold" data-testid="switch-confirm-button">{t('common.confirm')}</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Switch Node Dialog */}
+      <Dialog open={bulkSwitchOpen} onOpenChange={setBulkSwitchOpen}>
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>Switch All Users</DialogTitle>
+            <DialogDescription className="text-gray-500 text-sm">
+              Move all active users to a different node. Their ssconf:// subscription URLs stay the same — clients auto-update.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <p className="text-xs text-amber-400">This will switch {users.filter(u => u.status === 'active' && u.assigned_node_id).length} active users to the selected node.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-gray-400 text-xs uppercase">Target Node</Label>
+              <Select value={bulkNodeId} onValueChange={setBulkNodeId}>
+                <SelectTrigger className="bg-black/50 border-white/10 text-gray-200" data-testid="bulk-switch-node-select">
+                  <SelectValue placeholder="Select target node..." />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-950 border-white/10 text-gray-200">
+                  {nodes.filter(n => n.status === 'online').map(n => (
+                    <SelectItem key={n.id} value={String(n.id)} className="text-gray-200 focus:text-white focus:bg-cyan-900/30">{n.name} ({n.country}) — {n.user_count} users</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-3">
+              <Button variant="ghost" onClick={() => setBulkSwitchOpen(false)} className="flex-1 text-gray-400">{t('common.cancel')}</Button>
+              <Button onClick={handleBulkSwitch} disabled={!bulkNodeId || bulkSwitching}
+                className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold" data-testid="bulk-switch-confirm-button">
+                {bulkSwitching ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Switch All'}
+              </Button>
             </div>
           </div>
         </DialogContent>

@@ -122,7 +122,7 @@ export default function NodesPage() {
                             <MoreHorizontal className="w-4 h-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-zinc-950 border-white/10">
+                        <DropdownMenuContent align="end" className="bg-zinc-950 border-white/10 text-gray-200">
                           <DropdownMenuItem onClick={() => openEdit(node)} className="text-gray-300 gap-2">
                             <Pencil className="w-3.5 h-3.5" /> {t('common.edit')}
                           </DropdownMenuItem>
@@ -155,29 +155,29 @@ export default function NodesPage() {
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('nodes.nodeName')}</Label>
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="bg-black/50 border-white/10" data-testid="node-name-input" />
+                className="bg-black/50 border-white/10 text-gray-200" data-testid="node-name-input" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-gray-400 text-xs uppercase">{t('nodes.ipAddress')}</Label>
                 <Input value={form.ip} onChange={(e) => setForm({ ...form, ip: e.target.value })}
-                  className="bg-black/50 border-white/10 font-mono text-xs" data-testid="node-ip-input" />
+                  className="bg-black/50 border-white/10 font-mono text-xs text-gray-200" data-testid="node-ip-input" />
               </div>
               <div className="space-y-1.5">
                 <Label className="text-gray-400 text-xs uppercase">{t('nodes.apiPort')}</Label>
                 <Input type="number" value={form.api_port} onChange={(e) => setForm({ ...form, api_port: e.target.value })}
-                  className="bg-black/50 border-white/10 font-mono text-xs" data-testid="node-port-input" />
+                  className="bg-black/50 border-white/10 font-mono text-xs text-gray-200" data-testid="node-port-input" />
               </div>
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('nodes.apiKey')}</Label>
               <Input value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-                placeholder={editing ? '(unchanged)' : ''} className="bg-black/50 border-white/10 font-mono text-xs" data-testid="node-key-input" />
+                placeholder={editing ? '(unchanged)' : ''} className="bg-black/50 border-white/10 font-mono text-xs text-gray-200" data-testid="node-key-input" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('nodes.country')}</Label>
               <Input value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })}
-                placeholder="DE, US, NL..." className="bg-black/50 border-white/10" data-testid="node-country-input" />
+                placeholder="DE, US, NL..." className="bg-black/50 border-white/10 text-gray-200" data-testid="node-country-input" />
             </div>
             <div className="flex gap-3 pt-2">
               <Button variant="ghost" onClick={() => setDialogOpen(false)} className="flex-1 text-gray-400">
