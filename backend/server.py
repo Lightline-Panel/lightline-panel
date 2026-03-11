@@ -283,12 +283,43 @@ async def _get_global_ss_port(db) -> int:
     return int(os.environ.get('SS_PORT', '8388'))
 
 
-def _build_user_ss_url(user, node, ss_port: int = 8388) -> str:
-    """Build a proper ss:// URL for a user on a node."""
-    if not node or not user.ss_password:
+async def _get_node_server_password(node) -> str:
+    """Fetch the server's shared SS password from the node agent.
+    
+    In single-password mode (Outline model), all users share one server password.
+    The panel fetches it from the node's /server-info endpoint.
+    Falls back to the node's stored ss_password if the API is unreachable.
+    """
+    api_port = node.api_port or 9090
+    token = node.api_key or ''
+    if not token:
+        return ''
+    for scheme in ['http', 'https']:
+        url = f"{scheme}://{node.ip}:{api_port}/server-info"
+        try:
+            async with httpx.AsyncClient(timeout=8, verify=False) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get('password', '')
+        except Exception:
+            continue
+    return ''
+
+
+def _build_user_ss_url(user, node, ss_port: int = 8388, server_password: str = '') -> str:
+    """Build a proper ss:// URL for a user on a node.
+    
+    Uses the server's shared password (single-password mode).
+    If server_password not provided, falls back to user.ss_password for compat.
+    """
+    if not node:
+        return ""
+    password = server_password or user.ss_password or ''
+    if not password:
         return ""
     return build_ss_url(
-        password=user.ss_password,
+        password=password,
         host=node.ip,
         port=ss_port,
         tag=user.username,
@@ -435,21 +466,24 @@ async def _check_node_health(node) -> str:
     """Check node health via httpx to node REST API, fallback to TCP on SS port."""
     api_port = node.api_port or 9090
     token = node.api_key or ''
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
 
-    # Method 1: Proper HTTP request to the node agent API
-    if token:
-        url = f"http://{node.ip}:{api_port}/health"
+    # Method 1: Try HTTP first (default), then HTTPS (for SSL-enabled nodes)
+    for scheme in ['http', 'https']:
+        if not token:
+            break
+        url = f"{scheme}://{node.ip}:{api_port}/health"
         try:
-            async with httpx.AsyncClient(timeout=8) as client:
-                resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+            async with httpx.AsyncClient(timeout=8, verify=False) as client:
+                resp = await client.get(url, headers=headers)
                 if resp.status_code == 200:
                     return 'online'
-                # 503 = ss-server not running but node agent is reachable
                 if resp.status_code == 503:
                     logger.warning(f"Node {node.name}: agent reachable but ss-server not running")
                     return 'offline'
         except Exception as e:
-            logger.debug(f"Node {node.name} API health check failed: {e}")
+            logger.debug(f"Node {node.name} health check via {scheme} failed: {e}")
+            continue
 
     # Method 2: Fallback — TCP connect to SS port
     try:
@@ -510,7 +544,8 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
         node = (await db.execute(select(Node).where(Node.id == req.assigned_node_id))).scalar_one_or_none()
         if node:
             ss_port = await _get_global_ss_port(db)
-            user.access_url = _build_user_ss_url(user, node, ss_port)
+            server_pw = await _get_node_server_password(node)
+            user.access_url = _build_user_ss_url(user, node, ss_port, server_password=server_pw)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_created',
                     details=f'VPN user "{req.username}" created',
                     ip_address=request.client.host if request.client else None))
@@ -536,7 +571,8 @@ async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Dep
             node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
             if node:
                 ss_port = await _get_global_ss_port(db)
-                user.access_url = _build_user_ss_url(user, node, ss_port)
+                server_pw = await _get_node_server_password(node)
+                user.access_url = _build_user_ss_url(user, node, ss_port, server_password=server_pw)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_updated',
                     details=f'VPN user "{user.username}" updated',
                     ip_address=request.client.host if request.client else None))
@@ -570,7 +606,8 @@ async def switch_node(user_id: int, req: SwitchNodeRequest, request: Request, ad
     if not user.ss_password:
         user.ss_password = generate_password()
     ss_port = await _get_global_ss_port(db)
-    user.access_url = _build_user_ss_url(user, new_node, ss_port)
+    server_pw = await _get_node_server_password(new_node)
+    user.access_url = _build_user_ss_url(user, new_node, ss_port, server_password=server_pw)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_node_switched',
                     details=f'User "{user.username}" switched to "{new_node.name}"',
                     ip_address=request.client.host if request.client else None))
@@ -588,13 +625,14 @@ async def bulk_switch_node(req: BulkSwitchNodeRequest, request: Request, admin=D
         select(VPNUser).where(VPNUser.status == 'active', VPNUser.assigned_node_id.isnot(None), VPNUser.assigned_node_id != req.node_id)
     )).scalars().all()
     ss_port = await _get_global_ss_port(db)
+    server_pw = await _get_node_server_password(new_node)
     switched = 0
     for user in users:
         try:
             user.assigned_node_id = req.node_id
             if not user.ss_password:
                 user.ss_password = generate_password()
-            user.access_url = _build_user_ss_url(user, new_node, ss_port)
+            user.access_url = _build_user_ss_url(user, new_node, ss_port, server_password=server_pw)
             switched += 1
         except Exception as e:
             logger.error(f"Bulk switch error for user {user.username}: {e}")
@@ -724,7 +762,13 @@ async def system_health():
 
 @api_router.get("/sub/{access_token}")
 async def get_subscription(access_token: str, db: AsyncSession = Depends(get_db)):
-    """Return current ss:// URL for a user. Used by ssconf:// protocol in Outline clients."""
+    """Outline-compatible dynamic access key endpoint.
+    
+    Returns the ss:// URL directly (supported by Outline Client v1.8.1+).
+    Used via ssconf:// protocol: ssconf://https://domain/api/sub/TOKEN
+    
+    The Outline client fetches this URL and reads the ss:// link to connect.
+    """
     user = (await db.execute(select(VPNUser).where(VPNUser.access_token == access_token))).scalar_one_or_none()
     if not user:
         raise HTTPException(404, "Not found")
@@ -732,7 +776,11 @@ async def get_subscription(access_token: str, db: AsyncSession = Depends(get_db)
         raise HTTPException(403, "Account suspended")
     if not user.access_url:
         raise HTTPException(404, "No access URL configured")
-    return PlainTextResponse(user.access_url, media_type="text/plain")
+    # Return the ss:// URL with ?outline=1 for Outline compatibility
+    ss_url = user.access_url
+    if '?' not in ss_url:
+        ss_url += '/?outline=1'
+    return PlainTextResponse(ss_url, media_type="text/plain")
 
 
 # ===== Audit Logs =====
@@ -779,11 +827,15 @@ async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(g
         users = (await db.execute(
             select(VPNUser).where(VPNUser.assigned_node_id.isnot(None), VPNUser.ss_password.isnot(None))
         )).scalars().all()
+        # Cache server passwords per node to avoid repeated API calls
+        _node_pw_cache = {}
         updated = 0
         for user in users:
             node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
             if node:
-                user.access_url = _build_user_ss_url(user, node, new_ss_port)
+                if node.id not in _node_pw_cache:
+                    _node_pw_cache[node.id] = await _get_node_server_password(node)
+                user.access_url = _build_user_ss_url(user, node, new_ss_port, server_password=_node_pw_cache[node.id])
                 updated += 1
         logger.info(f"SS port changed to {new_ss_port}, regenerated {updated} user access URLs")
 
