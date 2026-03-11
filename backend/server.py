@@ -29,15 +29,6 @@ from auth import (hash_password, verify_password, create_access_token,
                   create_refresh_token, decode_token, get_current_admin)
 from ss_manager import generate_password, build_ss_url, SS_METHOD
 from cache import cache_get_json, cache_set_json, cache_delete, close_redis
-from license_client import (
-    is_external_license_server_configured,
-    activate_license as external_activate_license,
-    validate_license as external_validate_license,
-    heartbeat as external_heartbeat,
-    get_server_fingerprint as get_fingerprint_from_client,
-)
-
-LICENSE_SERVER_URL = os.environ.get('LICENSE_SERVER_URL', '')
 
 app = FastAPI(title="Lightline VPN Panel")
 api_router = APIRouter(prefix="/api")
@@ -109,6 +100,10 @@ class LoginTOTPRequest(BaseModel):
 
 class LicenseActivate(BaseModel):
     license_key: str
+
+class LicenseCreate(BaseModel):
+    expire_days: int = 30
+    max_servers: int = 1
 
 class TOTPConfirmRequest(BaseModel):
     secret: str
@@ -553,18 +548,32 @@ async def get_licenses(admin=Depends(get_current_admin), db: AsyncSession = Depe
         "activated_servers": l.activated_servers, "server_fingerprint": l.server_fingerprint
     } for l in lics]
 
+@api_router.post("/licenses")
+async def create_license(req: LicenseCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    key = f"LL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+    lic = License(license_key=key, expire_days=req.expire_days, max_servers=req.max_servers,
+                  activated_servers=0, status='active')
+    db.add(lic)
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='license_created',
+                    details=f'License created: {key}',
+                    ip_address=request.client.host if request.client else None))
+    await db.flush()
+    return {"id": lic.id, "license_key": lic.license_key, "expire_days": lic.expire_days,
+            "max_servers": lic.max_servers, "status": lic.status}
+
+@api_router.delete("/licenses/{license_id}")
+async def revoke_license(license_id: int, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    lic = (await db.execute(select(License).where(License.id == license_id))).scalar_one_or_none()
+    if not lic:
+        raise HTTPException(404, "License not found")
+    lic.status = 'revoked'
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='license_revoked',
+                    details=f'License revoked: {lic.license_key}',
+                    ip_address=request.client.host if request.client else None))
+    return {"message": "License revoked"}
+
 @api_router.post("/licenses/validate")
 async def validate_license(req: LicenseValidate, db: AsyncSession = Depends(get_db)):
-    # Use external license server if configured
-    if is_external_license_server_configured():
-        result = await external_validate_license(req.license_key)
-        if result.get('valid'):
-            return {"valid": True, "expires_at": result.get('expires_at'),
-                    "max_servers": result.get('max_servers'),
-                    "activated_servers": result.get('activated_servers')}
-        return {"valid": False, "reason": result.get('error', 'Validation failed')}
-
-    # Fallback: local validation
     lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
     if not lic:
         return {"valid": False, "reason": "License key not found"}
@@ -581,30 +590,6 @@ async def validate_license(req: LicenseValidate, db: AsyncSession = Depends(get_
 
 @api_router.post("/licenses/activate")
 async def activate_license(req: LicenseActivate, request: Request, db: AsyncSession = Depends(get_db)):
-    # Use external license server if configured
-    if is_external_license_server_configured():
-        result = await external_activate_license(req.license_key, hostname=platform.node())
-        if result.get('success'):
-            # Store/update local license record for dashboard display
-            lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
-            if not lic:
-                lic = License(license_key=req.license_key, expire_days=0, max_servers=1,
-                              activated_servers=1, status='active',
-                              server_fingerprint=get_server_fingerprint())
-                db.add(lic)
-            else:
-                lic.status = 'active'
-                lic.server_fingerprint = get_server_fingerprint()
-            db.add(AuditLog(admin_id=None, action='license_activated',
-                            details=f'License activated via external server: {req.license_key[:16]}...',
-                            ip_address=request.client.host if request.client else None))
-            return {"activated": True, "message": result.get('message'),
-                    "server_id": result.get('server_id'),
-                    "expires_at": result.get('expires_at'),
-                    "fingerprint": get_server_fingerprint()}
-        return {"activated": False, "reason": result.get('error', 'Activation failed')}
-
-    # Fallback: local activation
     lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
     if not lic:
         return {"activated": False, "reason": "License key not found"}
@@ -622,12 +607,11 @@ async def activate_license(req: LicenseActivate, request: Request, db: AsyncSess
             return {"activated": False, "reason": "Maximum activations reached"}
         lic.server_fingerprint = fingerprint
         lic.activated_servers += 1
+    db.add(AuditLog(admin_id=None, action='license_activated',
+                    details=f'License activated: {req.license_key[:16]}...',
+                    ip_address=request.client.host if request.client else None))
     return {"activated": True, "expires_in_days": (expire_date - datetime.now(timezone.utc)).days,
             "fingerprint": fingerprint}
-
-@api_router.get("/system/fingerprint")
-async def system_fingerprint(admin=Depends(get_current_admin)):
-    return {"fingerprint": get_server_fingerprint()}
 
 @api_router.get("/system/health")
 async def system_health():
@@ -721,29 +705,16 @@ async def license_heartbeat():
                     select(License).where(License.status == 'active').limit(1)
                 )).scalar_one_or_none()
                 if lic:
-                    # External license server heartbeat (preferred)
-                    if is_external_license_server_configured():
-                        result = await external_heartbeat(lic.license_key)
-                        if result.get('success'):
-                            logger.info(f"External heartbeat OK — expires at {result.get('expires_at')}")
-                        else:
-                            error = result.get('error', 'Unknown')
-                            logger.warning(f"External heartbeat failed: {error}")
-                            # Only suspend on definitive failures, not timeouts
-                            if 'timeout' not in error.lower() and 'unreachable' not in error.lower():
-                                lic.status = 'suspended'
-                                logger.warning("License suspended by external server")
+                    expire_date = lic.created_at + timedelta(days=lic.expire_days)
+                    if lic.expire_days > 0 and datetime.now(timezone.utc) > expire_date:
+                        lic.status = 'expired'
+                        logger.warning("License expired — panel suspended")
+                    elif lic.server_fingerprint and lic.server_fingerprint != get_server_fingerprint():
+                        lic.status = 'suspended'
+                        logger.warning("License fingerprint mismatch — panel suspended")
                     else:
-                        # Local-only validation
-                        expire_date = lic.created_at + timedelta(days=lic.expire_days)
-                        if datetime.now(timezone.utc) > expire_date:
-                            lic.status = 'expired'
-                            logger.warning("License expired — panel suspended")
-                        elif lic.server_fingerprint and lic.server_fingerprint != get_server_fingerprint():
-                            lic.status = 'suspended'
-                            logger.warning("License fingerprint mismatch — panel suspended")
-                        else:
-                            logger.info(f"License heartbeat OK — expires in {(expire_date - datetime.now(timezone.utc)).days} days")
+                        days_left = (expire_date - datetime.now(timezone.utc)).days if lic.expire_days > 0 else 'unlimited'
+                        logger.info(f"License heartbeat OK — expires in {days_left} days")
                     await session.commit()
                 else:
                     logger.info("No active license found")
@@ -765,7 +736,7 @@ async def startup():
         if admin_count == 0:
             logger.warning("No admin account found. Create one with: docker exec -it lightline-backend python cli.py admin create")
         if not lic:
-            logger.warning("No active license. Activate with: docker exec -it lightline-backend python cli.py license activate <KEY>")
+            logger.warning("No active license. Create one with: docker exec -it lightline-backend python cli.py license create")
     asyncio.create_task(check_all_nodes_health())
     asyncio.create_task(license_heartbeat())
     logger.info("Lightline VPN Panel started")

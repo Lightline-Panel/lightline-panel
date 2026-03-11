@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightline VPN Panel CLI — License and admin management commands."""
+"""Lightline VPN Panel CLI — Admin and license management commands."""
 
 import asyncio
 import sys
@@ -20,12 +20,14 @@ from database import async_session, engine, Base
 from models import Admin, License
 from auth import hash_password
 
-import httpx
-
 
 def get_server_fingerprint() -> str:
     raw = f"{platform.node()}-{platform.machine()}-{uuid.getnode()}"
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def generate_license_key() -> str:
+    return f"LL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
 
 
 async def init_db():
@@ -97,10 +99,40 @@ async def cmd_admin_reset(username: str = None, password: str = None):
             print(f"[OK] Admin '{username}' created")
 
 
+async def cmd_license_create(expire_days: int = None, max_servers: int = None):
+    """Create a new license key."""
+    await init_db()
+    print()
+    print("  Lightline VPN Panel — Create License Key")
+    print("  " + "=" * 42)
+    print()
+
+    if expire_days is None:
+        val = input("  Expire days [30]: ").strip()
+        expire_days = int(val) if val else 30
+    if max_servers is None:
+        val = input("  Max servers [1]: ").strip()
+        max_servers = int(val) if val else 1
+
+    key = generate_license_key()
+    async with async_session() as session:
+        lic = License(license_key=key, expire_days=expire_days, max_servers=max_servers,
+                      activated_servers=0, status='active')
+        session.add(lic)
+        await session.commit()
+
+    print()
+    print(f"  [OK] License created successfully")
+    print()
+    print(f"    Key:         {key}")
+    print(f"    Expire days: {expire_days}")
+    print(f"    Max servers: {max_servers}")
+    print()
+
+
 async def cmd_activate_license(key: str = None):
     """Activate a license key on this server."""
     await init_db()
-    LICENSE_SERVER_URL = os.environ.get('LICENSE_SERVER_URL', '')
 
     if not key:
         print()
@@ -114,57 +146,12 @@ async def cmd_activate_license(key: str = None):
 
     fingerprint = get_server_fingerprint()
 
-    if LICENSE_SERVER_URL:
-        # Activate via external license server
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(f"{LICENSE_SERVER_URL}/api/license/activate", json={
-                    "license_key": key,
-                    "hostname": platform.node(),
-                    "fingerprint": fingerprint,
-                })
-                result = resp.json()
-                if resp.status_code == 200 and result.get('success'):
-                    # Store locally
-                    async with async_session() as session:
-                        lic = (await session.execute(
-                            select(License).where(License.license_key == key)
-                        )).scalar_one_or_none()
-                        if not lic:
-                            lic = License(license_key=key, expire_days=0, max_servers=1,
-                                          activated_servers=1, status='active',
-                                          server_fingerprint=fingerprint)
-                            session.add(lic)
-                        else:
-                            lic.status = 'active'
-                            lic.server_fingerprint = fingerprint
-                        await session.commit()
-                    print(f"  [OK] License activated via license server")
-                    print(f"    Key:         {key}")
-                    print(f"    Expires at:  {result.get('expires_at', 'N/A')}")
-                    print(f"    Server ID:   {result.get('server_id', 'N/A')}")
-                    print(f"    Fingerprint: {fingerprint}")
-                else:
-                    print(f"  [ERROR] {result.get('error', 'Activation failed')}")
-        except Exception as e:
-            print(f"  [ERROR] Could not reach license server: {e}")
-        return
-
-    # Local-only activation
     async with async_session() as session:
         lic = (await session.execute(
             select(License).where(License.license_key == key)
         )).scalar_one_or_none()
         if not lic:
-            # Store as active (no external server configured)
-            lic = License(license_key=key, expire_days=365, max_servers=1,
-                          activated_servers=1, status='active',
-                          server_fingerprint=fingerprint)
-            session.add(lic)
-            await session.commit()
-            print(f"  [OK] License stored and activated locally")
-            print(f"    Key:         {key}")
-            print(f"    Fingerprint: {fingerprint}")
+            print(f"  [ERROR] License key not found. Create one first with: python cli.py license create")
             return
         if lic.status != 'active':
             print(f"  [ERROR] License is {lic.status}")
@@ -178,8 +165,11 @@ async def cmd_activate_license(key: str = None):
             lic.activated_servers += 1
             await session.commit()
             print(f"  [OK] License activated on this server")
-        else:
+        elif lic.server_fingerprint == fingerprint:
             print(f"  [OK] License already active on this server")
+        else:
+            print(f"  [ERROR] License bound to a different server")
+            return
         days_left = (expire_date - datetime.now(timezone.utc)).days if lic.expire_days > 0 else 'unlimited'
         print(f"    Key:         {lic.license_key}")
         print(f"    Expires in:  {days_left} days")
@@ -193,8 +183,9 @@ async def cmd_show_license():
             select(License).order_by(License.created_at.desc())
         )).scalars().all()
         if not lics:
-            print("[INFO] No licenses found. Activate one with: python cli.py license activate")
+            print("[INFO] No licenses found. Create one with: python cli.py license create")
             return
+        print()
         for lic in lics:
             if lic.expire_days > 0:
                 expire_date = lic.created_at + timedelta(days=lic.expire_days)
@@ -204,6 +195,7 @@ async def cmd_show_license():
             print(f"  [{lic.status.upper():>10}] {lic.license_key}  "
                   f"expires={days_left}d  servers={lic.activated_servers}/{lic.max_servers}  "
                   f"fp={lic.server_fingerprint or 'none'}")
+        print()
 
 
 async def cmd_fingerprint():
@@ -217,11 +209,12 @@ def print_usage():
     print("  Usage: python cli.py <command> [args]")
     print()
     print("  Commands:")
-    print("    admin create                    Create a new admin account (interactive)")
-    print("    admin reset [--user U] [--pass P]  Reset admin password")
-    print("    license activate [KEY]          Activate a license key (interactive if no key)")
-    print("    license show                    Show all licenses")
-    print("    fingerprint                     Show this server's fingerprint")
+    print("    admin create                           Create a new admin account (interactive)")
+    print("    admin reset [--user U] [--pass P]      Reset admin password")
+    print("    license create [--days N] [--servers N] Create a new license key")
+    print("    license activate [KEY]                 Activate a license key on this server")
+    print("    license show                           Show all licenses")
+    print("    fingerprint                            Show this server's fingerprint")
     print()
 
 
@@ -260,7 +253,19 @@ def main():
             print_usage()
             return
         sub = args[1]
-        if sub == 'activate':
+        if sub == 'create':
+            expire_days = None
+            max_servers = None
+            i = 2
+            while i < len(args):
+                if args[i] == '--days' and i + 1 < len(args):
+                    expire_days = int(args[i + 1]); i += 2
+                elif args[i] == '--servers' and i + 1 < len(args):
+                    max_servers = int(args[i + 1]); i += 2
+                else:
+                    i += 1
+            asyncio.run(cmd_license_create(expire_days, max_servers))
+        elif sub == 'activate':
             key = args[2] if len(args) > 2 else None
             asyncio.run(cmd_activate_license(key))
         elif sub == 'show':
