@@ -1,23 +1,34 @@
 /**
- * Copy text to clipboard — works on HTTP and HTTPS.
+ * Copy text to clipboard — works on HTTP and HTTPS, inside dialogs and dropdowns.
  *
- * Uses a short setTimeout to escape Radix UI dropdown focus traps,
- * then tries execCommand (works on HTTP) and Clipboard API (HTTPS).
+ * Tries Clipboard API first (works in dialogs without focus issues),
+ * then falls back to execCommand with a textarea (works on HTTP).
+ * Uses setTimeout to escape Radix UI focus traps in dropdowns.
  */
 export function copyToClipboard(text) {
   if (!text) return Promise.resolve(false);
 
   return new Promise((resolve) => {
-    // Delay to let Radix DropdownMenu fully close and release focus.
-    // Without this, execCommand('copy') silently fails inside dropdown handlers.
-    setTimeout(() => {
-      // Method 1: execCommand with textarea — works on HTTP
+    // Small delay to escape Radix DropdownMenu/Dialog focus traps
+    setTimeout(async () => {
+      // Method 1: Clipboard API — works inside dialogs (no focus needed)
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        try {
+          await navigator.clipboard.writeText(text);
+          resolve(true);
+          return;
+        } catch {
+          // Clipboard API can fail on HTTP — fall through to execCommand
+        }
+      }
+
+      // Method 2: execCommand with textarea — works on HTTP
       try {
         const ta = document.createElement('textarea');
         ta.value = text;
         ta.setAttribute('readonly', '');
         ta.style.cssText =
-          'position:fixed;left:0;top:0;width:1px;height:1px;padding:0;border:none;outline:none;box-shadow:none;background:transparent;opacity:0.01;';
+          'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;padding:0;border:none;outline:none;box-shadow:none;background:transparent;opacity:0;';
         document.body.appendChild(ta);
 
         if (/ipad|iphone/i.test(navigator.userAgent)) {
@@ -39,13 +50,18 @@ export function copyToClipboard(text) {
         // fall through
       }
 
-      // Method 2: Clipboard API (requires HTTPS or localhost)
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        navigator.clipboard.writeText(text).then(() => resolve(true)).catch(() => resolve(false));
-        return;
+      // Method 3: window.clipboardData (IE/legacy)
+      if (window.clipboardData && window.clipboardData.setData) {
+        try {
+          window.clipboardData.setData('Text', text);
+          resolve(true);
+          return;
+        } catch {
+          // fall through
+        }
       }
 
       resolve(false);
-    }, 100);
+    }, 50);
   });
 }

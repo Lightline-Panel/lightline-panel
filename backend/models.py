@@ -23,8 +23,8 @@ class Node(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
     ip = Column(String(45), nullable=False)
-    api_port = Column(Integer, nullable=True)  # legacy (Outline), now used as node agent port
-    api_key = Column(Text, nullable=True)  # legacy (Outline), now used as node_token
+    api_port = Column(Integer, default=62050)  # node service port (Marzban-node style, default 62050)
+    api_key = Column(Text, nullable=True)  # legacy — no longer used (mTLS replaces tokens)
     ss_port = Column(Integer, default=8388)  # Shadowsocks listen port on the node
     country = Column(String(100))
     status = Column(String(20), default='unknown')

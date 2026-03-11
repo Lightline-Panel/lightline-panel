@@ -33,6 +33,7 @@ from auth import (hash_password, verify_password, create_access_token,
                   create_refresh_token, decode_token, get_current_admin)
 from ss_manager import generate_password, build_ss_url, SS_METHOD
 from cache import cache_get_json, cache_set_json, cache_delete, close_redis
+from panel_certificate import get_panel_certificate, get_panel_cert_and_key
 
 app = FastAPI(title="Lightline VPN Panel")
 api_router = APIRouter(prefix="/api")
@@ -287,6 +288,48 @@ async def _get_global_ss_port(db) -> int:
     return int(os.environ.get('SS_PORT', '8388'))
 
 
+def _get_node_http_client() -> httpx.AsyncClient:
+    """Create an httpx client configured for node connections.
+    
+    Uses the panel's client certificate for mTLS if available.
+    Falls back to plain HTTPS with verify=False if cert not available.
+    """
+    try:
+        cert_file, key_file = get_panel_cert_and_key()
+        return httpx.AsyncClient(
+            timeout=8,
+            verify=False,  # node uses self-signed cert
+            cert=(cert_file, key_file),  # panel's client cert for mTLS
+        )
+    except Exception:
+        return httpx.AsyncClient(timeout=8, verify=False)
+
+
+async def _node_request(node, method: str, path: str, **kwargs) -> httpx.Response:
+    """Make an HTTPS request to a node's REST API.
+    
+    Tries HTTPS first (new Marzban-style nodes), then HTTP (legacy nodes).
+    Uses panel's client certificate for mTLS authentication.
+    """
+    api_port = node.api_port or 62050
+    # Also try legacy token auth for backward compatibility
+    token = node.api_key or ''
+    headers = kwargs.pop('headers', {})
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    for scheme in ['https', 'http']:
+        url = f"{scheme}://{node.ip}:{api_port}{path}"
+        try:
+            async with _get_node_http_client() as client:
+                resp = await client.request(method, url, headers=headers, **kwargs)
+                return resp
+        except Exception as e:
+            logger.debug(f"Node {node.name} {scheme} request to {path} failed: {e}")
+            continue
+    return None
+
+
 async def _get_node_server_info(node) -> dict:
     """Fetch server password, port, and method from the node agent.
     
@@ -294,20 +337,9 @@ async def _get_node_server_info(node) -> dict:
     Returns dict with 'password', 'port', 'method' keys.
     Falls back to panel defaults if the node API is unreachable.
     """
-    api_port = node.api_port or 9090
-    token = node.api_key or ''
-    if not token:
-        return {}
-    headers = {"Authorization": f"Bearer {token}"}
-    for scheme in ['http', 'https']:
-        url = f"{scheme}://{node.ip}:{api_port}/server-info"
-        try:
-            async with httpx.AsyncClient(timeout=8, verify=False) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code == 200:
-                    return resp.json()
-        except Exception:
-            continue
+    resp = await _node_request(node, 'GET', '/server-info')
+    if resp and resp.status_code == 200:
+        return resp.json()
     return {}
 
 
@@ -398,8 +430,8 @@ async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends
         uc = (await db.execute(select(func.count(VPNUser.id)).where(VPNUser.assigned_node_id == n.id))).scalar()
         result.append({
             "id": n.id, "name": n.name, "ip": n.ip,
-            "api_port": n.api_port or 9090,
-            "ss_port": ss_port,
+            "api_port": n.api_port or 62050,
+            "ss_port": n.ss_port or 8388,
             "node_token": n.api_key or "",
             "country": n.country, "status": n.status,
             "last_heartbeat": n.last_heartbeat.isoformat() if n.last_heartbeat else None,
@@ -407,23 +439,30 @@ async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends
         })
     return result
 
+@api_router.get("/nodes/certificate")
+async def get_node_certificate(admin=Depends(get_current_admin)):
+    """Show the panel's certificate for node mTLS setup.
+    
+    Admin copies this certificate to the node as ssl_client_cert.pem.
+    Same pattern as Marzban's 'Show Certificate' button.
+    """
+    cert_pem = get_panel_certificate()
+    return {"certificate": cert_pem}
+
+
 @api_router.post("/nodes")
 async def create_node(req: NodeCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    node_token = secrets.token_urlsafe(32)
-    # Auto-assign api_port: find highest existing and increment
-    max_port = (await db.execute(select(func.max(Node.api_port)))).scalar()
-    api_port = (max_port or 9089) + 1  # starts at 9090
+    api_port = req.api_port or 62050
     ss_port = req.ss_port or int(os.environ.get('SS_PORT', '8388'))
-    node = Node(name=req.name, ip=req.ip, api_port=req.api_port or api_port,
-                ss_port=ss_port, country=req.country,
-                api_key=node_token, status='offline')
+    node = Node(name=req.name, ip=req.ip, api_port=api_port,
+                ss_port=ss_port, country=req.country, status='offline')
     db.add(node)
     await db.flush()
     db.add(AuditLog(admin_id=int(admin["sub"]), action='node_created',
-                    details=f'Node "{req.name}" ({req.country}) added — API port {api_port}',
+                    details=f'Node "{req.name}" ({req.country}) added — service port {api_port}',
                     ip_address=request.client.host if request.client else None))
     await cache_delete('dashboard')
-    return {"id": node.id, "name": node.name, "status": node.status, "node_token": node_token, "api_port": api_port}
+    return {"id": node.id, "name": node.name, "status": node.status, "api_port": api_port}
 
 @api_router.put("/nodes/{node_id}")
 async def update_node(node_id: int, req: NodeUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
@@ -502,31 +541,23 @@ async def health_check(node_id: int, admin=Depends(get_current_admin), db: Async
 
 
 async def _check_node_health(node) -> str:
-    """Check node health via httpx to node REST API, fallback to TCP on SS port."""
-    api_port = node.api_port or 9090
-    token = node.api_key or ''
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-
-    # Method 1: Try HTTP first (default), then HTTPS (for SSL-enabled nodes)
-    for scheme in ['http', 'https']:
-        if not token:
-            break
-        url = f"{scheme}://{node.ip}:{api_port}/health"
-        try:
-            async with httpx.AsyncClient(timeout=8, verify=False) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code == 200:
-                    return 'online'
-                if resp.status_code == 503:
-                    logger.warning(f"Node {node.name}: agent reachable but ss-server not running")
-                    return 'offline'
-        except Exception as e:
-            logger.debug(f"Node {node.name} health check via {scheme} failed: {e}")
-            continue
+    """Check node health via REST API (mTLS), fallback to TCP on SS port."""
+    # Method 1: REST API health check (works with both new mTLS and legacy token nodes)
+    resp = await _node_request(node, 'GET', '/health')
+    if resp:
+        if resp.status_code == 200:
+            data = resp.json()
+            # New node returns {"healthy": true/false, "ss_running": true/false}
+            if data.get('healthy') or data.get('ss_running'):
+                return 'online'
+            return 'offline'
+        if resp.status_code == 503:
+            logger.warning(f"Node {node.name}: agent reachable but ss-server not running")
+            return 'offline'
 
     # Method 2: Fallback — TCP connect to SS port
     try:
-        ss_port = int(os.environ.get('SS_PORT', '8388'))
+        ss_port = node.ss_port or int(os.environ.get('SS_PORT', '8388'))
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(node.ip, ss_port), timeout=5
         )
@@ -953,14 +984,13 @@ async def startup():
         # Auto-create default local node if none exist
         if node_count == 0:
             server_ip = os.environ.get('SERVER_IP', '127.0.0.1')
-            node_token = secrets.token_urlsafe(32)
             default_ss_port = int(os.environ.get('SS_PORT', '8388'))
-            node = Node(name='Main Server', ip=server_ip, api_port=9090,
+            node = Node(name='Main Server', ip=server_ip, api_port=62050,
                         ss_port=default_ss_port,
-                        api_key=node_token, country='Local', status='offline')
+                        country='Local', status='offline')
             session.add(node)
             await session.commit()
-            logger.info(f"Default node 'Main Server' created (IP: {server_ip}, API port: 9090)")
+            logger.info(f"Default node 'Main Server' created (IP: {server_ip}, service port: 62050)")
         # Ensure global ss_port setting exists
         ss_setting = (await session.execute(select(PanelSettings).where(PanelSettings.key == 'ss_port'))).scalar_one_or_none()
         if not ss_setting:

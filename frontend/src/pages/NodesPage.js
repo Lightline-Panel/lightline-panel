@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, RefreshCw, Loader2, Copy, Key, Wifi, WifiOff } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, RefreshCw, Loader2, Copy, Key, Wifi, WifiOff, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
@@ -19,7 +19,8 @@ export default function NodesPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [tokenNode, setTokenNode] = useState(null);
+  const [certDialogOpen, setCertDialogOpen] = useState(false);
+  const [certificate, setCertificate] = useState('');
   const [form, setForm] = useState({ name: '', ip: '', country: '' });
   const [saving, setSaving] = useState(false);
   const { t } = useI18n();
@@ -92,6 +93,16 @@ export default function NodesPage() {
     }
   };
 
+  const showCertificate = async () => {
+    try {
+      const { data } = await api.get('/nodes/certificate');
+      setCertificate(data.certificate);
+      setCertDialogOpen(true);
+    } catch {
+      toast.error('Failed to load certificate');
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="nodes-page">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -107,6 +118,10 @@ export default function NodesPage() {
           <Button onClick={regenerateUrls} variant="outline"
             className="border-white/10 text-gray-300 gap-2 flex-1 sm:flex-none">
             <RefreshCw className="w-4 h-4" /> Regen URLs
+          </Button>
+          <Button onClick={showCertificate} variant="outline"
+            className="border-white/10 text-gray-300 gap-2 flex-1 sm:flex-none">
+            <ShieldCheck className="w-4 h-4" /> Certificate
           </Button>
           <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 flex-1 sm:flex-none" data-testid="add-node-button">
             <Plus className="w-4 h-4" /> {t('nodes.addNode')}
@@ -149,8 +164,8 @@ export default function NodesPage() {
                         <DropdownMenuItem onClick={() => openEdit(node)} className="text-gray-300 gap-2">
                           <Pencil className="w-3.5 h-3.5" /> {t('common.edit')}
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => setTokenNode(node)} className="text-gray-300 gap-2">
-                          <Key className="w-3.5 h-3.5" /> Node Token
+                        <DropdownMenuItem onClick={showCertificate} className="text-gray-300 gap-2">
+                          <ShieldCheck className="w-3.5 h-3.5" /> Show Certificate
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => healthCheck(node.id)} className="text-gray-300 gap-2">
                           <RefreshCw className="w-3.5 h-3.5" /> Reconnect
@@ -181,7 +196,7 @@ export default function NodesPage() {
 
                   <div className="flex items-center justify-between pt-1 border-t border-white/5">
                     <p className="text-[10px] text-gray-600">
-                      Port {node.api_port || 9090} · {node.last_heartbeat ? new Date(node.last_heartbeat).toLocaleString() : 'No heartbeat'}
+                      Service: {node.api_port || 62050} · SS: {node.ss_port || 8388} · {node.last_heartbeat ? new Date(node.last_heartbeat).toLocaleString() : 'No heartbeat'}
                     </p>
                   </div>
                 </CardContent>
@@ -230,37 +245,38 @@ export default function NodesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Node Token Dialog */}
-      <Dialog open={!!tokenNode} onOpenChange={() => setTokenNode(null)}>
-        <DialogContent className="bg-zinc-950 border-white/10 max-w-md mx-4">
+      {/* Certificate Dialog (Marzban-style) */}
+      <Dialog open={certDialogOpen} onOpenChange={setCertDialogOpen}>
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-lg mx-4">
           <DialogHeader>
-            <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>Node Token — {tokenNode?.name}</DialogTitle>
-            <DialogDescription className="text-gray-500 text-sm">Use this token when setting up Lightline Node</DialogDescription>
+            <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>Panel Certificate</DialogTitle>
+            <DialogDescription className="text-gray-500 text-sm">
+              Copy this certificate to your node server as <span className="font-mono text-cyan-400">ssl_client_cert.pem</span>
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
-            <div className="space-y-1.5">
-              <Label className="text-gray-400 text-xs uppercase">Token</Label>
-              <div className="p-3 rounded-lg bg-black/50 border border-white/10 font-mono text-xs text-cyan-400 break-all select-all">
-                {tokenNode?.node_token || 'No token generated'}
-              </div>
+            <div className="p-3 rounded-lg bg-black/50 border border-white/10 font-mono text-[10px] text-cyan-400 break-all select-all max-h-48 overflow-y-auto whitespace-pre-wrap">
+              {certificate || 'Loading...'}
             </div>
             <div className="p-3 rounded-lg bg-zinc-900/50 border border-white/5 space-y-2">
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider">Environment Variables</p>
-              <p className="font-mono text-[11px] text-gray-300 break-all">
-                NODE_TOKEN={tokenNode?.node_token}<br />
-                NODE_PORT={tokenNode?.api_port || 9090}
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider">Setup Instructions</p>
+              <p className="text-[11px] text-gray-300 leading-relaxed">
+                1. Install Lightline Node on your server<br />
+                2. Copy this certificate and paste it into:<br />
+                <span className="font-mono text-cyan-400 text-[10px]">/var/lib/lightline-node/ssl_client_cert.pem</span><br />
+                3. Run <span className="font-mono text-cyan-400 text-[10px]">docker compose up -d</span>
               </p>
             </div>
             <Button
               onClick={() => {
-                copyToClipboard(tokenNode?.node_token || '').then(ok => {
-                  if (ok) toast.success('Token copied');
+                copyToClipboard(certificate).then(ok => {
+                  if (ok) toast.success('Certificate copied');
                   else toast.error('Copy failed');
                 });
               }}
               className="w-full bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2"
             >
-              <Copy className="w-4 h-4" /> Copy Token
+              <Copy className="w-4 h-4" /> Copy Certificate
             </Button>
           </div>
         </DialogContent>
