@@ -176,7 +176,16 @@ export default function UsersPage() {
                             <ArrowLeftRight className="w-3.5 h-3.5" /> {t('users.switchNode')}
                           </DropdownMenuItem>
                           {u.access_url && (
-                            <DropdownMenuItem onClick={() => { copyToClipboard(u.access_url).then(ok => ok ? toast.success('Copied') : toast.error('Copy failed')); }} className="text-gray-300 gap-2">
+                            <DropdownMenuItem
+                              onSelect={(e) => {
+                                e.preventDefault();
+                                copyToClipboard(u.access_url).then(ok => {
+                                  if (ok) toast.success('Copied');
+                                  else toast.error('Copy failed');
+                                });
+                              }}
+                              className="text-gray-300 gap-2"
+                            >
                               <Copy className="w-3.5 h-3.5" /> Copy URL
                             </DropdownMenuItem>
                           )}
@@ -243,12 +252,23 @@ export default function UsersPage() {
               </div>
             )}
             <div className="w-full space-y-2 px-2">
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Subscription URL (ssconf://)</p>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Access Key (ss://)</p>
               <p className="font-mono text-[10px] text-cyan-400 text-center break-all max-w-full bg-black/50 rounded-lg p-2 border border-white/5">{qrUser?.access_url}</p>
             </div>
             <Button variant="ghost" size="sm" onClick={() => { copyToClipboard(qrUser?.access_url || '').then(ok => ok ? toast.success('Copied') : toast.error('Copy failed')); }} className="text-cyan-400 gap-2">
-              <Copy className="w-3.5 h-3.5" /> Copy Subscription URL
+              <Copy className="w-3.5 h-3.5" /> Copy Access Key
             </Button>
+            {qrUser?.subscription_url && (
+              <div className="w-full space-y-2 px-2 pt-2 border-t border-white/5">
+                <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Subscription URL (ssconf:// — requires HTTPS)</p>
+                <p className="font-mono text-[10px] text-gray-500 text-center break-all max-w-full bg-black/50 rounded-lg p-2 border border-white/5">{qrUser?.subscription_url}</p>
+                <div className="flex justify-center">
+                  <Button variant="ghost" size="sm" onClick={() => { copyToClipboard(qrUser?.subscription_url || '').then(ok => ok ? toast.success('Copied') : toast.error('Copy failed')); }} className="text-gray-500 gap-2 text-xs">
+                    <Copy className="w-3 h-3" /> Copy Subscription URL
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

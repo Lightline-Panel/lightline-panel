@@ -235,7 +235,7 @@ async def get_user_qrcode(user_id: int, admin=Depends(get_current_admin), db: As
     user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
-    url = user.access_url or user.ss_url
+    url = user.ss_url or user.access_url
     if not url:
         raise HTTPException(404, "No access URL available")
     img = qrcode.make(url)
@@ -420,7 +420,8 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
             "device_limit": u.device_limit,
             "expire_date": u.expire_date.isoformat() if u.expire_date else None,
             "assigned_node_id": u.assigned_node_id, "node_name": node_name,
-            "outline_key_id": u.outline_key_id, "access_url": u.access_url,
+            "outline_key_id": u.outline_key_id, "access_url": u.ss_url or u.access_url,
+            "subscription_url": u.access_url if u.access_url and u.access_url.startswith('ssconf://') else None,
             "ss_url": u.ss_url, "access_token": u.access_token,
             "status": u.status, "created_at": u.created_at.isoformat(), "traffic_used": traffic
         })
@@ -457,7 +458,7 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
                     details=f'VPN user "{req.username}" created',
                     ip_address=request.client.host if request.client else None))
     await cache_delete('dashboard')
-    return {"id": user.id, "username": user.username, "access_url": user.access_url, "outline_key_id": user.outline_key_id}
+    return {"id": user.id, "username": user.username, "access_url": user.ss_url or user.access_url, "outline_key_id": user.outline_key_id}
 
 @api_router.put("/users/{user_id}")
 async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
@@ -519,7 +520,7 @@ async def switch_node(user_id: int, req: SwitchNodeRequest, request: Request, ad
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_node_switched',
                     details=f'User "{user.username}" switched to "{new_node.name}"',
                     ip_address=request.client.host if request.client else None))
-    return {"message": "Node switched", "access_url": user.access_url}
+    return {"message": "Node switched", "access_url": user.ss_url or user.access_url}
 
 @api_router.post("/users/bulk-switch-node")
 async def bulk_switch_node(req: BulkSwitchNodeRequest, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
