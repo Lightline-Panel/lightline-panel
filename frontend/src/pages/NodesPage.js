@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, RefreshCw, Loader2, Copy, Key, Wifi, WifiOff, ShieldCheck } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, RefreshCw, Loader2, Copy, Wifi, WifiOff, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
@@ -21,7 +21,7 @@ export default function NodesPage() {
   const [editing, setEditing] = useState(null);
   const [certDialogOpen, setCertDialogOpen] = useState(false);
   const [certificate, setCertificate] = useState('');
-  const [form, setForm] = useState({ name: '', ip: '', country: '' });
+  const [form, setForm] = useState({ name: '', ip: '', port: 62050, country: '' });
   const [saving, setSaving] = useState(false);
   const { t } = useI18n();
 
@@ -30,8 +30,8 @@ export default function NodesPage() {
   };
   useEffect(fetchNodes, []);
 
-  const openAdd = () => { setEditing(null); setForm({ name: '', ip: '', country: '' }); setDialogOpen(true); };
-  const openEdit = (node) => { setEditing(node); setForm({ name: node.name, ip: node.ip, country: node.country || '' }); setDialogOpen(true); };
+  const openAdd = () => { setEditing(null); setForm({ name: '', ip: '', port: 62050, country: '' }); setDialogOpen(true); };
+  const openEdit = (node) => { setEditing(node); setForm({ name: node.name, ip: node.ip, port: node.port || 62050, country: node.country || '' }); setDialogOpen(true); };
 
   const handleSave = async () => {
     setSaving(true);
@@ -196,7 +196,7 @@ export default function NodesPage() {
 
                   <div className="flex items-center justify-between pt-1 border-t border-white/5">
                     <p className="text-[10px] text-gray-600">
-                      Service: {node.api_port || 62050} · SS: {node.ss_port || 8388} · {node.last_heartbeat ? new Date(node.last_heartbeat).toLocaleString() : 'No heartbeat'}
+                      Port: {node.port || 62050} · {node.last_heartbeat ? new Date(node.last_heartbeat).toLocaleString() : 'No heartbeat'}
                     </p>
                   </div>
                 </CardContent>
@@ -214,7 +214,7 @@ export default function NodesPage() {
               {editing ? t('nodes.editNode') : t('nodes.addNode')}
             </DialogTitle>
             <DialogDescription className="text-gray-500 text-sm">
-              {editing ? 'Update node details' : 'Add a new server node. Token and port are auto-generated.'}
+              {editing ? 'Update node details' : 'Add a new Lightline Node server'}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
@@ -227,6 +227,11 @@ export default function NodesPage() {
               <Label className="text-gray-400 text-xs uppercase">{t('nodes.ipAddress')}</Label>
               <Input value={form.ip} onChange={(e) => setForm({ ...form, ip: e.target.value })}
                 placeholder="e.g. 45.33.21.10" className="bg-black/50 border-white/10 font-mono text-sm text-gray-200" data-testid="node-ip-input" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-gray-400 text-xs uppercase">Port</Label>
+              <Input type="number" value={form.port} onChange={(e) => setForm({ ...form, port: parseInt(e.target.value) || 62050 })}
+                placeholder="62050" className="bg-black/50 border-white/10 font-mono text-sm text-gray-200" data-testid="node-port-input" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('nodes.country')}</Label>

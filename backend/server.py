@@ -85,16 +85,14 @@ class RefreshRequest(BaseModel):
 class NodeCreate(BaseModel):
     name: str
     ip: str
+    port: Optional[int] = 62050       # SERVICE_PORT (like Marzban)
     country: Optional[str] = None
-    ss_port: Optional[int] = 8388
-    api_port: Optional[int] = None
 
 class NodeUpdate(BaseModel):
     name: Optional[str] = None
     ip: Optional[str] = None
+    port: Optional[int] = None        # SERVICE_PORT (like Marzban)
     country: Optional[str] = None
-    ss_port: Optional[int] = None
-    api_port: Optional[int] = None
 
 class UserCreate(BaseModel):
     username: str
@@ -430,9 +428,7 @@ async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends
         uc = (await db.execute(select(func.count(VPNUser.id)).where(VPNUser.assigned_node_id == n.id))).scalar()
         result.append({
             "id": n.id, "name": n.name, "ip": n.ip,
-            "api_port": n.api_port or 62050,
-            "ss_port": n.ss_port or 8388,
-            "node_token": n.api_key or "",
+            "port": n.api_port or 62050,
             "country": n.country, "status": n.status,
             "last_heartbeat": n.last_heartbeat.isoformat() if n.last_heartbeat else None,
             "created_at": n.created_at.isoformat(), "user_count": uc
@@ -452,24 +448,27 @@ async def get_node_certificate(admin=Depends(get_current_admin)):
 
 @api_router.post("/nodes")
 async def create_node(req: NodeCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    api_port = req.api_port or 62050
-    ss_port = req.ss_port or int(os.environ.get('SS_PORT', '8388'))
-    node = Node(name=req.name, ip=req.ip, api_port=api_port,
-                ss_port=ss_port, country=req.country, status='offline')
+    port = req.port or 62050
+    node = Node(name=req.name, ip=req.ip, api_port=port,
+                country=req.country, status='offline')
     db.add(node)
     await db.flush()
     db.add(AuditLog(admin_id=int(admin["sub"]), action='node_created',
-                    details=f'Node "{req.name}" ({req.country}) added — service port {api_port}',
+                    details=f'Node "{req.name}" ({req.country}) added — port {port}',
                     ip_address=request.client.host if request.client else None))
     await cache_delete('dashboard')
-    return {"id": node.id, "name": node.name, "status": node.status, "api_port": api_port}
+    return {"id": node.id, "name": node.name, "status": node.status, "port": port}
 
 @api_router.put("/nodes/{node_id}")
 async def update_node(node_id: int, req: NodeUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
     if not node:
         raise HTTPException(404, "Node not found")
-    for k, v in req.model_dump(exclude_none=True).items():
+    data = req.model_dump(exclude_none=True)
+    # Map 'port' from API model to 'api_port' DB column
+    if 'port' in data:
+        data['api_port'] = data.pop('port')
+    for k, v in data.items():
         setattr(node, k, v)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='node_updated',
                     details=f'Node "{node.name}" updated',
@@ -492,10 +491,15 @@ async def delete_node(node_id: int, request: Request, admin=Depends(get_current_
 
 @api_router.post("/nodes/refresh-all")
 async def refresh_all_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    """Health-check all nodes at once."""
+    """Connect + health-check all nodes at once."""
     nodes = (await db.execute(select(Node))).scalars().all()
     results = {}
     for node in nodes:
+        # Try /connect first to establish session
+        try:
+            await _node_request(node, 'POST', '/connect')
+        except Exception:
+            pass
         node.status = await _check_node_health(node)
         if node.status == 'online':
             node.last_heartbeat = datetime.now(timezone.utc)
@@ -530,9 +534,17 @@ async def regenerate_all_urls(admin=Depends(get_current_admin), db: AsyncSession
 
 @api_router.post("/nodes/{node_id}/health-check")
 async def health_check(node_id: int, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    """Reconnect button — establishes session with node, then checks health."""
     node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
     if not node:
         raise HTTPException(404, "Node not found")
+
+    # Step 1: Try to establish a session (like Marzban /connect)
+    connect_resp = await _node_request(node, 'POST', '/connect')
+    if connect_resp and connect_resp.status_code == 200:
+        logger.info(f"Node {node.name}: session established")
+
+    # Step 2: Check health
     node.status = await _check_node_health(node)
     if node.status == 'online':
         node.last_heartbeat = datetime.now(timezone.utc)
@@ -542,20 +554,35 @@ async def health_check(node_id: int, admin=Depends(get_current_admin), db: Async
 
 async def _check_node_health(node) -> str:
     """Check node health via REST API (mTLS), fallback to TCP on SS port."""
-    # Method 1: REST API health check (works with both new mTLS and legacy token nodes)
+    api_port = node.api_port or 62050
+
+    # Method 1: REST API health check
     resp = await _node_request(node, 'GET', '/health')
     if resp:
+        logger.info(f"Node {node.name}: /health returned {resp.status_code}")
         if resp.status_code == 200:
-            data = resp.json()
-            # New node returns {"healthy": true/false, "ss_running": true/false}
-            if data.get('healthy') or data.get('ss_running'):
+            try:
+                data = resp.json()
+                if data.get('healthy') or data.get('ss_running'):
+                    return 'online'
+                # Node agent running but SS not — still mark as connected
+                return 'offline'
+            except Exception:
+                # Got 200 but not JSON — node is alive
                 return 'online'
-            return 'offline'
         if resp.status_code == 503:
             logger.warning(f"Node {node.name}: agent reachable but ss-server not running")
             return 'offline'
+    else:
+        logger.warning(f"Node {node.name}: no response from {node.ip}:{api_port}")
 
-    # Method 2: Fallback — TCP connect to SS port
+    # Method 2: Try /status endpoint (no auth needed)
+    resp2 = await _node_request(node, 'GET', '/status')
+    if resp2 and resp2.status_code == 200:
+        logger.info(f"Node {node.name}: /status reachable")
+        return 'online'
+
+    # Method 3: Fallback — TCP connect to SS port
     try:
         ss_port = node.ss_port or int(os.environ.get('SS_PORT', '8388'))
         reader, writer = await asyncio.wait_for(
@@ -563,6 +590,7 @@ async def _check_node_health(node) -> str:
         )
         writer.close()
         await writer.wait_closed()
+        logger.info(f"Node {node.name}: SS port {ss_port} reachable via TCP")
         return 'online'
     except Exception:
         pass
@@ -930,11 +958,17 @@ async def check_all_nodes_health():
             async with async_session() as session:
                 nodes = (await session.execute(select(Node))).scalars().all()
                 for node in nodes:
+                    # Try to establish/maintain session with each node
+                    try:
+                        await _node_request(node, 'POST', '/connect')
+                    except Exception:
+                        pass
                     node.status = await _check_node_health(node)
                     if node.status == 'online':
                         node.last_heartbeat = datetime.now(timezone.utc)
                 await session.commit()
-                logger.info(f"Health check: {len(nodes)} nodes checked")
+                online = sum(1 for n in nodes if n.status == 'online')
+                logger.info(f"Health check: {online}/{len(nodes)} nodes online")
         except Exception as e:
             logger.error(f"Health check error: {e}")
         await asyncio.sleep(300)
@@ -986,7 +1020,6 @@ async def startup():
             server_ip = os.environ.get('SERVER_IP', '127.0.0.1')
             default_ss_port = int(os.environ.get('SS_PORT', '8388'))
             node = Node(name='Main Server', ip=server_ip, api_port=62050,
-                        ss_port=default_ss_port,
                         country='Local', status='offline')
             session.add(node)
             await session.commit()

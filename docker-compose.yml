@@ -62,30 +62,16 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-
-  # Caddy reverse proxy — auto HTTPS with Let's Encrypt
-  # Set PANEL_DOMAIN in .env to your domain (e.g. panel.example.com)
-  # Caddy will automatically obtain and renew SSL certificates
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on:
-      - frontend
-      - backend
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddydata:/data
-      - caddyconfig:/config
-    environment:
-      PANEL_DOMAIN: ${PANEL_DOMAIN:-:80}
+      # Mount certbot SSL certs for HTTPS (like Marzban)
+      # Run: certbot certonly --standalone -d YOUR_DOMAIN
+      # Then set SSL_CERT_DIR=/etc/letsencrypt/live/YOUR_DOMAIN in .env
+      - ${SSL_CERT_DIR:-./ssl}:/etc/nginx/ssl:ro
 
 volumes:
   pgdata:
   redisdata:
-  caddydata:
-  caddyconfig:
   panelcerts:
