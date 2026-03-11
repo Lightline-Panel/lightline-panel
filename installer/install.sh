@@ -139,33 +139,66 @@ fi
 
 # ── Build and start services ──
 
-log "Building and starting services..."
-
 if docker compose version &>/dev/null; then
   COMPOSE_CMD="docker compose"
 else
   COMPOSE_CMD="docker-compose"
 fi
 
-$COMPOSE_CMD pull 2>/dev/null || true
-$COMPOSE_CMD build --no-cache
-$COMPOSE_CMD up -d
+echo ""
+log "═══════════════════════════════════════════════"
+log "  Step 1/5: Pulling base images"
+log "═══════════════════════════════════════════════"
+log "Downloading PostgreSQL, Redis, Python, Node.js images..."
+log "This may take a few minutes on first install."
+$COMPOSE_CMD pull 2>&1 || true
+ok "Base images pulled"
 
-ok "Services started"
+echo ""
+log "═══════════════════════════════════════════════"
+log "  Step 2/5: Building backend"
+log "═══════════════════════════════════════════════"
+log "Installing system packages and Python dependencies..."
+log "This may take 2-5 minutes."
+$COMPOSE_CMD build --no-cache --progress=plain backend 2>&1
+ok "Backend image built"
 
-# ── Wait for backend health ──
+echo ""
+log "═══════════════════════════════════════════════"
+log "  Step 3/5: Building frontend"
+log "═══════════════════════════════════════════════"
+log "Installing Node.js packages and building React app..."
+log "This may take 3-8 minutes."
+$COMPOSE_CMD build --no-cache --progress=plain frontend 2>&1
+ok "Frontend image built"
 
-log "Waiting for backend to be ready..."
+echo ""
+log "═══════════════════════════════════════════════"
+log "  Step 4/5: Starting services"
+log "═══════════════════════════════════════════════"
+log "Starting PostgreSQL, Redis, backend, and frontend..."
+$COMPOSE_CMD up -d 2>&1
+ok "All services started"
+
+echo ""
+log "═══════════════════════════════════════════════"
+log "  Step 5/5: Waiting for backend health check"
+log "═══════════════════════════════════════════════"
+log "Checking if backend is responding..."
 for i in $(seq 1 30); do
   if curl -sf http://127.0.0.1:8000/api/system/health &>/dev/null; then
-    ok "Backend is healthy"
+    ok "Backend is healthy and responding!"
     break
   fi
   if [ "$i" -eq 30 ]; then
-    warn "Backend not responding yet. Check logs: $COMPOSE_CMD logs backend"
+    warn "Backend not responding yet. This can be normal on first start."
+    warn "Check logs with: $COMPOSE_CMD logs backend"
+    warn "Wait a minute and try: curl http://127.0.0.1:8000/api/system/health"
   fi
+  echo -ne "\r  Waiting... ($i/30)"
   sleep 2
 done
+echo ""
 
 # ── Print summary ──
 
