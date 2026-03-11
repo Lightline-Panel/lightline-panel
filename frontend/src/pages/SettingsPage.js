@@ -151,7 +151,7 @@ export default function SettingsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-sm text-gray-400">Global SS port used by all nodes. Changing this will affect new connections.</p>
+              <p className="text-sm text-gray-400">Global SS port used by all nodes. Changing this will update all existing user URLs automatically.</p>
               <div className="flex gap-3 items-end">
                 <div className="flex-1 space-y-1.5">
                   <Label className="text-gray-400 text-xs uppercase">Port</Label>
@@ -161,8 +161,8 @@ export default function SettingsPage() {
                 <Button onClick={async () => {
                   setSavingPort(true);
                   try {
-                    await api.put('/settings', { settings: { ss_port: ssPort } });
-                    toast.success('SS port updated');
+                    const { data } = await api.put('/settings', { settings: { ss_port: ssPort } });
+                    toast.success(data.message || 'SS port updated');
                   } catch { toast.error('Failed to save'); }
                   setSavingPort(false);
                 }} disabled={savingPort}

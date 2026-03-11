@@ -22,6 +22,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import pyotp
 import qrcode
+import httpx
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -431,34 +432,28 @@ async def health_check(node_id: int, admin=Depends(get_current_admin), db: Async
 
 
 async def _check_node_health(node) -> str:
-    """Check a node's health via its API, fallback to TCP SS port."""
+    """Check node health via httpx to node REST API, fallback to TCP on SS port."""
     api_port = node.api_port or 9090
     token = node.api_key or ''
-    # Method 1: Try the node agent REST API
+
+    # Method 1: Proper HTTP request to the node agent API
     if token:
+        url = f"http://{node.ip}:{api_port}/health"
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(node.ip, api_port), timeout=5
-            )
-            request_line = (
-                f"GET /health HTTP/1.1\r\n"
-                f"Host: {node.ip}:{api_port}\r\n"
-                f"Authorization: Bearer {token}\r\n"
-                f"Connection: close\r\n\r\n"
-            )
-            writer.write(request_line.encode())
-            await writer.drain()
-            response = await asyncio.wait_for(reader.read(4096), timeout=5)
-            writer.close()
-            await writer.wait_closed()
-            resp_str = response.decode(errors='ignore')
-            if '200' in resp_str.split('\r\n')[0]:
-                return 'online'
-        except Exception:
-            pass
-    # Method 2: Fallback — try TCP to SS port
-    ss_port = node.ss_port or 8388
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+                if resp.status_code == 200:
+                    return 'online'
+                # 503 = ss-server not running but node agent is reachable
+                if resp.status_code == 503:
+                    logger.warning(f"Node {node.name}: agent reachable but ss-server not running")
+                    return 'offline'
+        except Exception as e:
+            logger.debug(f"Node {node.name} API health check failed: {e}")
+
+    # Method 2: Fallback — TCP connect to SS port
     try:
+        ss_port = int(os.environ.get('SS_PORT', '8388'))
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(node.ip, ss_port), timeout=5
         )
@@ -466,7 +461,9 @@ async def _check_node_health(node) -> str:
         await writer.wait_closed()
         return 'online'
     except Exception:
-        return 'offline'
+        pass
+
+    return 'offline'
 
 
 # ===== User Routes =====
@@ -762,15 +759,38 @@ async def get_settings(admin=Depends(get_current_admin), db: AsyncSession = Depe
 
 @api_router.put("/settings")
 async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    ss_port_changed = False
+    new_ss_port = None
     for key, value in req.settings.items():
         existing = (await db.execute(select(PanelSettings).where(PanelSettings.key == key))).scalar_one_or_none()
         if existing:
+            if key == 'ss_port' and existing.value != str(value):
+                ss_port_changed = True
+                new_ss_port = int(value)
             existing.value = str(value)
         else:
             db.add(PanelSettings(key=key, value=str(value)))
+            if key == 'ss_port':
+                ss_port_changed = True
+                new_ss_port = int(value)
+
+    # When SS port changes, regenerate all users' access_url
+    if ss_port_changed and new_ss_port:
+        users = (await db.execute(
+            select(VPNUser).where(VPNUser.assigned_node_id.isnot(None), VPNUser.ss_password.isnot(None))
+        )).scalars().all()
+        updated = 0
+        for user in users:
+            node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+            if node:
+                user.access_url = _build_user_ss_url(user, node, new_ss_port)
+                updated += 1
+        logger.info(f"SS port changed to {new_ss_port}, regenerated {updated} user access URLs")
+
     db.add(AuditLog(admin_id=int(admin["sub"]), action='settings_updated',
-                    details='Panel settings updated', ip_address=request.client.host if request.client else None))
-    return {"message": "Settings updated"}
+                    details=f'Panel settings updated' + (f' — SS port changed to {new_ss_port}, {updated} URLs regenerated' if ss_port_changed else ''),
+                    ip_address=request.client.host if request.client else None))
+    return {"message": "Settings updated" + (f", {updated} user URLs regenerated" if ss_port_changed else "")}
 
 
 # ===== Backup =====
@@ -860,6 +880,12 @@ async def startup():
             session.add(node)
             await session.commit()
             logger.info(f"Default node 'Main Server' created (IP: {server_ip}, API port: 9090)")
+        # Ensure global ss_port setting exists
+        ss_setting = (await session.execute(select(PanelSettings).where(PanelSettings.key == 'ss_port'))).scalar_one_or_none()
+        if not ss_setting:
+            session.add(PanelSettings(key='ss_port', value=os.environ.get('SS_PORT', '8388')))
+            await session.commit()
+            logger.info(f"Global SS port setting initialized: {os.environ.get('SS_PORT', '8388')}")
     asyncio.create_task(check_all_nodes_health())
     asyncio.create_task(license_heartbeat())
     logger.info("Lightline VPN Panel started")
