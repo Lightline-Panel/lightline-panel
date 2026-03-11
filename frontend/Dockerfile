@@ -1,10 +1,12 @@
-FROM node:18-alpine AS build
+FROM node:20-alpine AS build
 
 WORKDIR /app
 
 RUN echo ">>> [1/4] Installing dependencies..."
 COPY package.json package-lock.json* ./
-RUN npm install --legacy-peer-deps 2>&1 && echo ">>> Dependencies installed successfully"
+RUN npm install --legacy-peer-deps 2>&1 \
+    && npm install ajv@8 --legacy-peer-deps 2>&1 \
+    && echo ">>> Dependencies installed successfully"
 
 RUN echo ">>> [2/4] Copying source files..."
 COPY . .

@@ -160,7 +160,7 @@ log "  Step 2/5: Building backend"
 log "═══════════════════════════════════════════════"
 log "Installing system packages and Python dependencies..."
 log "This may take 2-5 minutes."
-$COMPOSE_CMD build --no-cache --progress=plain backend 2>&1
+$COMPOSE_CMD build --progress=plain backend 2>&1
 ok "Backend image built"
 
 echo ""
@@ -169,7 +169,7 @@ log "  Step 3/5: Building frontend"
 log "═══════════════════════════════════════════════"
 log "Installing Node.js packages and building React app..."
 log "This may take 3-8 minutes."
-$COMPOSE_CMD build --no-cache --progress=plain frontend 2>&1
+$COMPOSE_CMD build --progress=plain frontend 2>&1
 ok "Frontend image built"
 
 echo ""
