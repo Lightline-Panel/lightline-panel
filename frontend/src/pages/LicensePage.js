@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Key, Trash2, Loader2, Copy, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
@@ -128,7 +128,7 @@ export default function LicensePage() {
       {/* Create License Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
-          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('licenses.createLicense')}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('licenses.createLicense')}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Generate a new license key</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('licenses.expireDays')}</Label>
@@ -153,7 +153,7 @@ export default function LicensePage() {
       {/* Validate License Dialog */}
       <Dialog open={validateOpen} onOpenChange={setValidateOpen}>
         <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
-          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('licenses.validate')}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('licenses.validate')}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Check license key validity</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('licenses.licenseKey')}</Label>

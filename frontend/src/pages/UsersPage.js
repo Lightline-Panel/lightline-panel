@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -181,7 +181,7 @@ export default function UsersPage() {
       {/* Add/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="bg-zinc-950 border-white/10 max-w-md">
-          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{editing ? t('users.editUser') : t('users.addUser')}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{editing ? t('users.editUser') : t('users.addUser')}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Configure VPN user access</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('users.username')}</Label>
@@ -229,7 +229,7 @@ export default function UsersPage() {
       {/* QR Code Dialog */}
       <Dialog open={!!qrUser} onOpenChange={() => setQrUser(null)}>
         <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
-          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('users.qrCode')} — {qrUser?.username}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('users.qrCode')} — {qrUser?.username}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Scan to connect</DialogDescription></DialogHeader>
           <div className="flex flex-col items-center gap-4 py-4">
             {qrUser?.access_url && (
               <div className="p-4 bg-white rounded-xl">
@@ -247,7 +247,7 @@ export default function UsersPage() {
       {/* Switch Node Dialog */}
       <Dialog open={!!switchUser} onOpenChange={() => setSwitchUser(null)}>
         <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
-          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('users.switchNode')} — {switchUser?.username}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('users.switchNode')} — {switchUser?.username}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Select a new server</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
             <Select value={switchNodeId} onValueChange={setSwitchNodeId}>
               <SelectTrigger className="bg-black/50 border-white/10" data-testid="switch-node-select">
