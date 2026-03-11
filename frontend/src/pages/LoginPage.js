@@ -5,7 +5,7 @@ import { useI18n } from '@/contexts/I18nContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Shield, Loader2 } from 'lucide-react';
+import { Shield, Loader2, Terminal } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
@@ -16,7 +16,8 @@ export default function LoginPage() {
   const [totpCode, setTotpCode] = useState('');
   const [needsTotp, setNeedsTotp] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [setupMode, setSetupMode] = useState(false);
+  const [setupRequired, setSetupRequired] = useState(false);
+  const [noLicense, setNoLicense] = useState(false);
   const [checking, setChecking] = useState(true);
   const { login, user } = useAuth();
   const { t } = useI18n();
@@ -25,7 +26,8 @@ export default function LoginPage() {
   useEffect(() => {
     if (user) navigate('/');
     api.get('/auth/check-setup').then(({ data }) => {
-      setSetupMode(data.setup_required);
+      setSetupRequired(data.setup_required);
+      setNoLicense(!data.license_active);
       setChecking(false);
     }).catch(() => setChecking(false));
   }, [user, navigate]);
@@ -34,11 +36,6 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      if (setupMode) {
-        await api.post('/auth/setup', { username, password });
-        toast.success('Admin account created');
-        setSetupMode(false);
-      }
       const result = await login(username, password, totpCode || undefined);
       if (result?.requires_totp) {
         setNeedsTotp(true);
@@ -77,67 +74,95 @@ export default function LoginPage() {
             <h1 className="text-3xl font-bold tracking-wide text-white" style={{ fontFamily: 'Outfit' }}>
               {t('login.title')}
             </h1>
-            <p className="text-sm text-gray-500">{setupMode ? t('login.setupDesc') : t('login.subtitle')}</p>
+            <p className="text-sm text-gray-500">{t('login.subtitle')}</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="username" className="text-gray-400 text-xs uppercase tracking-wider">
-                {t('login.username')}
-              </Label>
-              <Input
-                id="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin"
-                className="bg-black/50 border-white/10 focus:border-cyan-500/50 h-11 text-gray-200"
-                data-testid="login-username-input"
-                required
-              />
+          {(setupRequired || noLicense) && (
+            <div className="space-y-3">
+              {setupRequired && (
+                <div className="p-4 rounded-lg border border-amber-500/20 bg-amber-500/5">
+                  <div className="flex items-start gap-3">
+                    <Terminal className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-amber-400">No admin account</p>
+                      <p className="text-xs text-gray-400 mt-1 font-mono">docker exec -it lightline-backend python cli.py admin create</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {noLicense && (
+                <div className="p-4 rounded-lg border border-red-500/20 bg-red-500/5">
+                  <div className="flex items-start gap-3">
+                    <Terminal className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-red-400">No active license</p>
+                      <p className="text-xs text-gray-400 mt-1 font-mono">docker exec -it lightline-backend python cli.py license activate</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-gray-400 text-xs uppercase tracking-wider">
-                {t('login.password')}
-              </Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="bg-black/50 border-white/10 focus:border-cyan-500/50 h-11 text-gray-200"
-                data-testid="login-password-input"
-                required
-              />
-            </div>
-            {needsTotp && (
+          )}
+
+          {!setupRequired && (
+            <form onSubmit={handleSubmit} className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="totp" className="text-gray-400 text-xs uppercase tracking-wider">
-                  {t('login.totpCode')}
+                <Label htmlFor="username" className="text-gray-400 text-xs uppercase tracking-wider">
+                  {t('login.username')}
                 </Label>
                 <Input
-                  id="totp"
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value)}
-                  placeholder="000000"
-                  maxLength={6}
-                  className="bg-black/50 border-white/10 focus:border-cyan-500/50 h-11 text-gray-200 font-mono text-center text-lg tracking-[0.5em]"
-                  data-testid="login-totp-input"
-                  autoFocus
+                  id="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="bg-black/50 border-white/10 focus:border-cyan-500/50 h-11 text-gray-200"
+                  data-testid="login-username-input"
                   required
                 />
-                <p className="text-xs text-gray-500 text-center">Enter the 6-digit code from your authenticator app</p>
               </div>
-            )}
-            <Button
-              type="submit"
-              disabled={loading}
-              className="w-full h-11 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold shadow-[0_0_20px_rgba(6,182,212,0.3)] hover:shadow-[0_0_30px_rgba(6,182,212,0.5)] transition-shadow duration-300"
-              data-testid="login-submit-button"
-            >
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : (setupMode ? t('login.setup') : t('login.submit'))}
-            </Button>
-          </form>
+              <div className="space-y-2">
+                <Label htmlFor="password" className="text-gray-400 text-xs uppercase tracking-wider">
+                  {t('login.password')}
+                </Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="bg-black/50 border-white/10 focus:border-cyan-500/50 h-11 text-gray-200"
+                  data-testid="login-password-input"
+                  required
+                />
+              </div>
+              {needsTotp && (
+                <div className="space-y-2">
+                  <Label htmlFor="totp" className="text-gray-400 text-xs uppercase tracking-wider">
+                    {t('login.totpCode')}
+                  </Label>
+                  <Input
+                    id="totp"
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value)}
+                    placeholder="000000"
+                    maxLength={6}
+                    className="bg-black/50 border-white/10 focus:border-cyan-500/50 h-11 text-gray-200 font-mono text-center text-lg tracking-[0.5em]"
+                    data-testid="login-totp-input"
+                    autoFocus
+                    required
+                  />
+                  <p className="text-xs text-gray-500 text-center">Enter the 6-digit code from your authenticator app</p>
+                </div>
+              )}
+              <Button
+                type="submit"
+                disabled={loading}
+                className="w-full h-11 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold shadow-[0_0_20px_rgba(6,182,212,0.3)] hover:shadow-[0_0_30px_rgba(6,182,212,0.5)] transition-shadow duration-300"
+                data-testid="login-submit-button"
+              >
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : t('login.submit')}
+              </Button>
+            </form>
+          )}
 
           <p className="text-center text-[11px] text-gray-600">
             Lightline v1.0.0 — Secure VPN Management

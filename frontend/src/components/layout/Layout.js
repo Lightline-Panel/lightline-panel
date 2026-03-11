@@ -17,7 +17,8 @@ export default function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const toggleTheme = () => {
-    document.documentElement.classList.toggle('dark');
+    const isDark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('lightline_theme', isDark ? 'dark' : 'light');
   };
 
   return (

@@ -16,10 +16,22 @@ import DashboardPage from '@/pages/DashboardPage';
 import NodesPage from '@/pages/NodesPage';
 import UsersPage from '@/pages/UsersPage';
 import TrafficPage from '@/pages/TrafficPage';
-import LicensePage from '@/pages/LicensePage';
 import SettingsPage from '@/pages/SettingsPage';
 import AuditLogsPage from '@/pages/AuditLogsPage';
 import { Loader2 } from 'lucide-react';
+import { useEffect } from 'react';
+
+// Initialize theme from localStorage, default to dark
+function useInitTheme() {
+  useEffect(() => {
+    const saved = localStorage.getItem('lightline_theme');
+    if (saved === 'light') {
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.add('dark');
+    }
+  }, []);
+}
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -40,7 +52,6 @@ function AppRoutes() {
       <Route path="/nodes" element={<ProtectedRoute><NodesPage /></ProtectedRoute>} />
       <Route path="/users" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
       <Route path="/traffic" element={<ProtectedRoute><TrafficPage /></ProtectedRoute>} />
-      <Route path="/licenses" element={<ProtectedRoute><LicensePage /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
       <Route path="/audit-logs" element={<ProtectedRoute><AuditLogsPage /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -49,6 +60,7 @@ function AppRoutes() {
 }
 
 function App() {
+  useInitTheme();
   return (
     <BrowserRouter>
       <I18nProvider>

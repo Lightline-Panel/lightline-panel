@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import api from '@/lib/api';
 import QRCode from 'react-qr-code';
 import { motion } from 'framer-motion';
+import { copyToClipboard } from '@/lib/clipboard';
 
 const formatBytes = (b) => {
   if (!b) return '0 B';
@@ -31,7 +32,7 @@ export default function UsersPage() {
   const [qrUser, setQrUser] = useState(null);
   const [switchUser, setSwitchUser] = useState(null);
   const [switchNodeId, setSwitchNodeId] = useState('');
-  const [form, setForm] = useState({ username: '', password: '', traffic_limit: '0', device_limit: '1', expire_date: '', assigned_node_id: '' });
+  const [form, setForm] = useState({ username: '', traffic_limit: '0', expire_date: '', assigned_node_id: '' });
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [bulkSwitchOpen, setBulkSwitchOpen] = useState(false);
@@ -48,8 +49,8 @@ export default function UsersPage() {
   };
   useEffect(() => { fetchData(); }, []);
 
-  const openAdd = () => { setEditing(null); setForm({ username: '', password: '', traffic_limit: '0', device_limit: '1', expire_date: '', assigned_node_id: '' }); setDialogOpen(true); };
-  const openEdit = (u) => { setEditing(u); setForm({ username: u.username, password: '', traffic_limit: String(u.traffic_limit ? u.traffic_limit / 1_000_000_000 : 0), device_limit: String(u.device_limit), expire_date: u.expire_date ? u.expire_date.split('T')[0] : '', assigned_node_id: u.assigned_node_id ? String(u.assigned_node_id) : '' }); setDialogOpen(true); };
+  const openAdd = () => { setEditing(null); setForm({ username: '', traffic_limit: '0', expire_date: '', assigned_node_id: '' }); setDialogOpen(true); };
+  const openEdit = (u) => { setEditing(u); setForm({ username: u.username, traffic_limit: String(u.traffic_limit ? u.traffic_limit / 1_000_000_000 : 0), expire_date: u.expire_date ? u.expire_date.split('T')[0] : '', assigned_node_id: u.assigned_node_id ? String(u.assigned_node_id) : '' }); setDialogOpen(true); };
 
   const handleSave = async () => {
     setSaving(true);
@@ -57,16 +58,13 @@ export default function UsersPage() {
       const payload = {
         username: form.username,
         traffic_limit: parseFloat(form.traffic_limit) * 1_000_000_000,
-        device_limit: parseInt(form.device_limit),
         expire_date: form.expire_date || null,
         assigned_node_id: form.assigned_node_id ? parseInt(form.assigned_node_id) : null,
       };
-      if (form.password) payload.password = form.password;
       if (editing) {
         await api.put(`/users/${editing.id}`, payload);
         toast.success('User updated');
       } else {
-        payload.password = form.password || 'default123';
         await api.post('/users', payload);
         toast.success('User created');
       }
@@ -178,7 +176,7 @@ export default function UsersPage() {
                             <ArrowLeftRight className="w-3.5 h-3.5" /> {t('users.switchNode')}
                           </DropdownMenuItem>
                           {u.access_url && (
-                            <DropdownMenuItem onClick={() => { navigator.clipboard.writeText(u.access_url); toast.success('Copied'); }} className="text-gray-300 gap-2">
+                            <DropdownMenuItem onClick={() => { copyToClipboard(u.access_url).then(ok => ok ? toast.success('Copied') : toast.error('Copy failed')); }} className="text-gray-300 gap-2">
                               <Copy className="w-3.5 h-3.5" /> Copy URL
                             </DropdownMenuItem>
                           )}
@@ -206,18 +204,8 @@ export default function UsersPage() {
               <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-name-input" />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-gray-400 text-xs uppercase">{t('users.password')}</Label>
-              <Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder={editing ? '(unchanged)' : ''} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-password-input" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-gray-400 text-xs uppercase">{t('users.trafficLimit')}</Label>
-                <Input type="number" value={form.traffic_limit} onChange={(e) => setForm({ ...form, traffic_limit: e.target.value })} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-traffic-input" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-gray-400 text-xs uppercase">{t('users.deviceLimit')}</Label>
-                <Input type="number" value={form.device_limit} onChange={(e) => setForm({ ...form, device_limit: e.target.value })} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-device-input" />
-              </div>
+              <Label className="text-gray-400 text-xs uppercase">{t('users.trafficLimit')} (GB)</Label>
+              <Input type="number" value={form.traffic_limit} onChange={(e) => setForm({ ...form, traffic_limit: e.target.value })} placeholder="0 = unlimited" className="bg-black/50 border-white/10 text-gray-200" data-testid="user-traffic-input" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('users.expireDate')}</Label>
@@ -258,7 +246,7 @@ export default function UsersPage() {
               <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Subscription URL (ssconf://)</p>
               <p className="font-mono text-[10px] text-cyan-400 text-center break-all max-w-full bg-black/50 rounded-lg p-2 border border-white/5">{qrUser?.access_url}</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => { navigator.clipboard.writeText(qrUser?.access_url || ''); toast.success('Copied'); }} className="text-cyan-400 gap-2">
+            <Button variant="ghost" size="sm" onClick={() => { copyToClipboard(qrUser?.access_url || '').then(ok => ok ? toast.success('Copied') : toast.error('Copy failed')); }} className="text-cyan-400 gap-2">
               <Copy className="w-3.5 h-3.5" /> Copy Subscription URL
             </Button>
           </div>

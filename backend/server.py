@@ -61,10 +61,6 @@ class TokenResponse(BaseModel):
 class RefreshRequest(BaseModel):
     refresh_token: str
 
-class SetupRequest(BaseModel):
-    username: str
-    password: str
-
 class NodeCreate(BaseModel):
     name: str
     ip: str
@@ -81,17 +77,13 @@ class NodeUpdate(BaseModel):
 
 class UserCreate(BaseModel):
     username: str
-    password: Optional[str] = None
     traffic_limit: Optional[int] = 0
-    device_limit: Optional[int] = 1
     expire_date: Optional[str] = None
     assigned_node_id: Optional[int] = None
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
-    password: Optional[str] = None
     traffic_limit: Optional[int] = None
-    device_limit: Optional[int] = None
     expire_date: Optional[str] = None
     assigned_node_id: Optional[int] = None
     status: Optional[str] = None
@@ -101,10 +93,6 @@ class SwitchNodeRequest(BaseModel):
 
 class BulkSwitchNodeRequest(BaseModel):
     node_id: int
-
-class LicenseCreate(BaseModel):
-    expire_days: int = 30
-    max_servers: int = 1
 
 class LicenseValidate(BaseModel):
     license_key: str
@@ -139,19 +127,13 @@ async def root():
 
 @api_router.get("/auth/check-setup")
 async def check_setup(db: AsyncSession = Depends(get_db)):
-    count = (await db.execute(select(func.count(Admin.id)))).scalar()
-    return {"setup_required": count == 0}
-
-@api_router.post("/auth/setup")
-async def setup_admin(req: SetupRequest, db: AsyncSession = Depends(get_db)):
-    count = (await db.execute(select(func.count(Admin.id)))).scalar()
-    if count > 0:
-        raise HTTPException(400, "Admin already exists. Use login.")
-    admin = Admin(username=req.username, password_hash=hash_password(req.password), role='admin')
-    db.add(admin)
-    await db.flush()
-    db.add(AuditLog(admin_id=admin.id, action='admin_setup', details='Initial admin account created'))
-    return {"message": "Admin created successfully", "username": req.username}
+    admin_count = (await db.execute(select(func.count(Admin.id)))).scalar()
+    lic = (await db.execute(select(License).where(License.status == 'active').limit(1))).scalar_one_or_none()
+    return {
+        "setup_required": admin_count == 0,
+        "license_active": lic is not None,
+        "message": "Create admin via CLI: docker exec -it lightline-backend python cli.py admin create" if admin_count == 0 else None
+    }
 
 @api_router.post("/auth/login")
 async def login(req: LoginTOTPRequest, request: Request, db: AsyncSession = Depends(get_db)):
@@ -452,9 +434,7 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
     token = secrets.token_urlsafe(32)
     user = VPNUser(
         username=req.username,
-        password_hash=hash_password(req.password) if req.password else None,
         traffic_limit=req.traffic_limit or 0,
-        device_limit=req.device_limit or 1,
         expire_date=datetime.fromisoformat(req.expire_date) if req.expire_date else None,
         assigned_node_id=req.assigned_node_id, status='active',
         access_token=token
@@ -485,8 +465,6 @@ async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Dep
     if not user:
         raise HTTPException(404, "User not found")
     data = req.model_dump(exclude_none=True)
-    if 'password' in data:
-        data['password_hash'] = hash_password(data.pop('password'))
     if 'expire_date' in data and data['expire_date']:
         data['expire_date'] = datetime.fromisoformat(data['expire_date'])
     for k, v in data.items():
@@ -620,28 +598,6 @@ async def get_licenses(admin=Depends(get_current_admin), db: AsyncSession = Depe
         "expire_days": l.expire_days, "status": l.status, "max_servers": l.max_servers,
         "activated_servers": l.activated_servers, "server_fingerprint": l.server_fingerprint
     } for l in lics]
-
-@api_router.post("/licenses")
-async def create_license(req: LicenseCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    key = f"LL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
-    lic = License(license_key=key, expire_days=req.expire_days, max_servers=req.max_servers, status='active')
-    db.add(lic)
-    db.add(AuditLog(admin_id=int(admin["sub"]), action='license_created',
-                    details=f'License key generated ({req.expire_days} days, {req.max_servers} servers)',
-                    ip_address=request.client.host if request.client else None))
-    await db.flush()
-    return {"id": lic.id, "license_key": key}
-
-@api_router.delete("/licenses/{license_id}")
-async def revoke_license(license_id: int, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    lic = (await db.execute(select(License).where(License.id == license_id))).scalar_one_or_none()
-    if not lic:
-        raise HTTPException(404, "License not found")
-    lic.status = 'revoked'
-    db.add(AuditLog(admin_id=int(admin["sub"]), action='license_revoked',
-                    details=f'License {lic.license_key[:12]}... revoked',
-                    ip_address=request.client.host if request.client else None))
-    return {"message": "License revoked"}
 
 @api_router.post("/licenses/validate")
 async def validate_license(req: LicenseValidate, db: AsyncSession = Depends(get_db)):
@@ -799,25 +755,6 @@ async def check_all_nodes_health():
             logger.error(f"Health check error: {e}")
         await asyncio.sleep(300)
 
-async def generate_mock_traffic():
-    while True:
-        try:
-            if OUTLINE_MODE == 'mock':
-                async with async_session() as session:
-                    users = (await session.execute(
-                        select(VPNUser).where(VPNUser.status == 'active', VPNUser.assigned_node_id.isnot(None))
-                    )).scalars().all()
-                    for user in users:
-                        session.add(TrafficLog(
-                            user_id=user.id, node_id=user.assigned_node_id,
-                            bytes_transferred=random.randint(5_000_000, 800_000_000)
-                        ))
-                    await session.commit()
-                    logger.info(f"Mock traffic: generated for {len(users)} users")
-        except Exception as e:
-            logger.error(f"Mock traffic error: {e}")
-        await asyncio.sleep(3600)
-
 async def license_heartbeat():
     """Validate license every 6 hours. Suspend panel if invalid."""
     while True:
@@ -858,71 +795,6 @@ async def license_heartbeat():
         await asyncio.sleep(21600)  # 6 hours
 
 
-async def seed_mock_data():
-    async with async_session() as session:
-        count = (await session.execute(select(func.count(Admin.id)))).scalar()
-        if count > 0:
-            return
-        admin = Admin(username='admin', password_hash=hash_password('admin123'), role='admin')
-        session.add(admin)
-        await session.flush()
-
-        countries = [
-            ("Frankfurt DE", "185.100.86.1", 14322, "DE"),
-            ("Amsterdam NL", "94.140.14.1", 28891, "NL"),
-            ("Istanbul TR", "31.210.20.1", 43100, "TR"),
-            ("New York US", "104.16.1.1", 51022, "US"),
-            ("Tokyo JP", "103.5.28.1", 19443, "JP"),
-        ]
-        nodes = []
-        for name, ip, port, country in countries:
-            n = Node(name=name, ip=ip, api_port=port, api_key=secrets.token_hex(32),
-                     country=country, status=random.choice(['online', 'online', 'online', 'offline']),
-                     last_heartbeat=datetime.now(timezone.utc) - timedelta(minutes=random.randint(0, 30)))
-            session.add(n)
-            nodes.append(n)
-        await session.flush()
-
-        usernames = ['alice', 'bob', 'charlie', 'david', 'emma', 'frank', 'grace', 'henry', 'ivy', 'jack']
-        users = []
-        for uname in usernames:
-            nd = random.choice(nodes)
-            token = secrets.token_urlsafe(32)
-            ss_raw = f"ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwYXNz@{nd.ip}:8388/?outline=1#{uname}"
-            u = VPNUser(username=uname, password_hash=hash_password('password'),
-                        traffic_limit=random.choice([0, 5_000_000_000, 10_000_000_000, 50_000_000_000]),
-                        device_limit=random.choice([1, 2, 3, 5]),
-                        expire_date=datetime.now(timezone.utc) + timedelta(days=random.randint(10, 90)),
-                        assigned_node_id=nd.id, outline_key_id=str(random.randint(1000, 9999)),
-                        ss_url=ss_raw,
-                        access_token=token,
-                        access_url=f"ssconf://lightline.local/api/access/{token}",
-                        status='active')
-            session.add(u)
-            users.append(u)
-        await session.flush()
-
-        for day in range(30):
-            dt = datetime.now(timezone.utc) - timedelta(days=day)
-            for user in users:
-                if user.assigned_node_id and random.random() > 0.2:
-                    session.add(TrafficLog(user_id=user.id, node_id=user.assigned_node_id,
-                                           bytes_transferred=random.randint(50_000_000, 3_000_000_000),
-                                           recorded_at=dt.replace(hour=random.randint(0, 23))))
-
-        session.add(License(
-            license_key=f"LL-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}",
-            expire_days=365, max_servers=10, activated_servers=1, status='active'))
-
-        actions = ['login', 'node_created', 'user_created', 'settings_updated', 'license_created', 'user_node_switched']
-        for i in range(20):
-            session.add(AuditLog(admin_id=admin.id, action=random.choice(actions),
-                                  details=f'System activity #{i+1}', ip_address='127.0.0.1',
-                                  created_at=datetime.now(timezone.utc) - timedelta(hours=random.randint(0, 720))))
-        await session.commit()
-        logger.info("Mock data seeded: admin/admin123")
-
-
 # ===== App Events =====
 
 @app.on_event("startup")
@@ -930,12 +802,15 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables created")
-    if OUTLINE_MODE == 'mock':
-        await seed_mock_data()
+    async with async_session() as session:
+        admin_count = (await session.execute(select(func.count(Admin.id)))).scalar()
+        lic = (await session.execute(select(License).where(License.status == 'active').limit(1))).scalar_one_or_none()
+        if admin_count == 0:
+            logger.warning("No admin account found. Create one with: docker exec -it lightline-backend python cli.py admin create")
+        if not lic:
+            logger.warning("No active license. Activate with: docker exec -it lightline-backend python cli.py license activate <KEY>")
     asyncio.create_task(check_all_nodes_health())
     asyncio.create_task(license_heartbeat())
-    if OUTLINE_MODE == 'mock':
-        asyncio.create_task(generate_mock_traffic())
     logger.info(f"Lightline VPN Panel started (mode={OUTLINE_MODE})")
 
 @app.on_event("shutdown")

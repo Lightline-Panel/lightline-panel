@@ -12,7 +12,6 @@ const navItems = [
   { path: '/nodes', key: 'nodes', icon: Server },
   { path: '/users', key: 'users', icon: Users },
   { path: '/traffic', key: 'traffic', icon: BarChart3 },
-  { path: '/licenses', key: 'licenses', icon: Key },
   { path: '/settings', key: 'settings', icon: Settings },
   { path: '/audit-logs', key: 'audit', icon: FileText },
 ];

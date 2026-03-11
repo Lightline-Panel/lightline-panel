@@ -36,6 +36,7 @@ export default function SettingsPage() {
     } else {
       document.documentElement.classList.remove('dark');
     }
+    localStorage.setItem('lightline_theme', dark ? 'dark' : 'light');
   };
 
   const handleBackup = async () => {
