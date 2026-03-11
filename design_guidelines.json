@@ -1,0 +1,170 @@
+{
+  "identity": {
+    "name": "Lightline",
+    "description": "A premium, cyberpunk-inspired VPN management dashboard for the modern internet.",
+    "tone": "Professional, High-Tech, Secure, Fast, Cyberpunk-Lite",
+    "archetype": "Electric & Neon (Tempered)",
+    "keywords": ["Cyberpunk", "Network", "Security", "Speed", "Data"]
+  },
+  "typography": {
+    "headings": {
+      "family": "Outfit, sans-serif",
+      "weights": ["400", "600", "700"],
+      "usage": "All section headers, page titles, and modal headers. Use uppercase with wide tracking for labels."
+    },
+    "body": {
+      "family": "Inter, sans-serif",
+      "weights": ["400", "500"],
+      "usage": "General text, descriptions, form labels."
+    },
+    "code": {
+      "family": "JetBrains Mono, monospace",
+      "weights": ["400"],
+      "usage": "IP addresses, API keys, Logs, Server IDs, Port numbers."
+    },
+    "installation": "Execute in terminal: npm install @fontsource/outfit @fontsource/inter @fontsource/jetbrains-mono"
+  },
+  "colors": {
+    "theme_strategy": "Dark Mode First (Light Mode via Toggle)",
+    "palette": {
+      "background": {
+        "default": "#050505",
+        "paper": "#0A0A0A",
+        "subtle": "#121212"
+      },
+      "primary": {
+        "main": "#06b6d4",
+        "hover": "#0891b2",
+        "foreground": "#000000"
+      },
+      "secondary": {
+        "main": "#6366f1",
+        "foreground": "#ffffff"
+      },
+      "accent": {
+        "cyan": "#22d3ee",
+        "purple": "#818cf8",
+        "pink": "#f472b6"
+      },
+      "functional": {
+        "success": "#10b981",
+        "warning": "#f59e0b",
+        "error": "#ef4444",
+        "info": "#3b82f6"
+      },
+      "text": {
+        "primary": "#f3f4f6",
+        "secondary": "#9ca3af",
+        "disabled": "#4b5563"
+      },
+      "border": {
+        "default": "rgba(255, 255, 255, 0.1)",
+        "active": "rgba(6, 182, 212, 0.5)"
+      }
+    },
+    "gradients": {
+      "primary": "linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)",
+      "subtle_glow": "radial-gradient(circle at center, rgba(6, 182, 212, 0.15) 0%, rgba(0, 0, 0, 0) 70%)"
+    }
+  },
+  "layout": {
+    "grid_system": "Bento Grid (Mode B for Dashboard, Mode A for Overview)",
+    "spacing": {
+      "container_padding": "p-6 md:p-8 lg:p-12",
+      "gap": "gap-4 md:gap-6",
+      "section_spacing": "py-12"
+    },
+    "containers": {
+      "card": "bg-black/40 backdrop-blur-xl border border-white/10 rounded-xl hover:border-white/20 transition-all duration-300",
+      "sidebar": "fixed left-0 top-0 h-full w-64 bg-black/90 border-r border-white/10 hidden md:flex flex-col z-50",
+      "main_content": "md:ml-64 min-h-screen bg-background text-foreground relative overflow-hidden"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-primary text-primary-foreground shadow-[0_0_15px_rgba(6,182,212,0.3)] hover:shadow-[0_0_25px_rgba(6,182,212,0.5)] rounded-md px-6 py-2 font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]",
+      "secondary": "bg-white/5 border border-white/10 hover:bg-white/10 text-white rounded-md px-6 py-2 transition-all",
+      "ghost": "hover:bg-white/5 text-gray-400 hover:text-white rounded-md px-4 py-2"
+    },
+    "inputs": {
+      "default": "bg-black/50 border-white/10 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/50 rounded-md h-10 px-3 text-sm placeholder:text-gray-600 transition-all"
+    },
+    "cards": {
+      "dashboard_widget": "relative overflow-hidden bg-zinc-950/50 border border-white/5 p-6 rounded-xl hover:border-cyan-500/20 transition-colors group"
+    },
+    "tables": {
+      "wrapper": "rounded-lg border border-white/10 overflow-hidden bg-black/20",
+      "header": "bg-white/5 text-gray-400 text-xs uppercase tracking-wider font-medium h-10",
+      "row": "border-b border-white/5 hover:bg-white/[0.02] transition-colors h-14",
+      "cell": "text-sm text-gray-300 px-4"
+    },
+    "navigation": {
+      "sidebar_item": "flex items-center gap-3 px-4 py-3 rounded-lg text-gray-400 hover:text-cyan-400 hover:bg-cyan-950/30 transition-all text-sm font-medium",
+      "sidebar_item_active": "text-cyan-400 bg-cyan-950/30 border-r-2 border-cyan-500"
+    }
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-black/40 border border-white/10",
+    "glow_effects": "shadow-[0_0_20px_rgba(6,182,212,0.15)]",
+    "grid_background": "absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 pointer-events-none",
+    "status_indicators": {
+      "online": "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]",
+      "offline": "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]",
+      "warning": "bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.4)]"
+    }
+  },
+  "assets": {
+    "icons": {
+      "library": "lucide-react",
+      "style": "Stroke width 1.5px, size 18-20px for UI, 24px for Nav"
+    },
+    "images": {
+      "login_bg": "https://images.unsplash.com/photo-1764258560300-2346b28b4e7c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGN5YmVyJTIwbmV0d29yayUyMGRhdGElMjBmbG93JTIwZGFyayUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzczMTg5OTY2fDA&ixlib=rb-4.1.0&q=85",
+      "card_bg_pattern": "https://images.unsplash.com/photo-1647356191320-d7a1f80ca777?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDV8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMGN5YmVyJTIwbmV0d29yayUyMGRhdGElMjBmbG93JTIwZGFyayUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzczMTg5OTY2fDA&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "motion": {
+    "transitions": {
+      "default": "transition-all duration-200 ease-out",
+      "slow": "transition-all duration-500 ease-in-out"
+    },
+    "animations": {
+      "fade_in": "animate-in fade-in duration-300",
+      "slide_up": "animate-in slide-in-from-bottom-4 fade-in duration-500",
+      "pulse_slow": "animate-pulse duration-3000"
+    }
+  },
+  "accessibility": {
+    "contrast": "Ensure text is APCA compliant. Use gray-300 or lighter on dark backgrounds.",
+    "focus": "Visible focus rings (cyan-500) on all interactive elements.",
+    "aria": "Use aria-labels for icon-only buttons."
+  },
+  "instructions_to_main_agent": [
+    "Install 'framer-motion' and 'clsx' and 'tailwind-merge' if missing.",
+    "Use 'Outfit' font for all headings to give a modern tech feel.",
+    "Use 'JetBrains Mono' for any IP address, Port, Key, or Log entry.",
+    "Implement the Dashboard with a Bento Grid layout (Mode B).",
+    "Use Recharts for traffic statistics with custom dark-mode tooltips.",
+    "Ensure the Sidebar is collapsible on mobile.",
+    "Use the provided image URLs for the Login background and decorative elements.",
+    "Strictly follow the 'Dark Mode First' strategy.",
+    "All interactive elements MUST have data-testid attributes.",
+    "Do NOT use gradients for text. Keep text solid for readability.",
+    "Use 'sonner' for toast notifications."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: 'transition: all'. This results in breaking transforms.",
+    "You MUST NOT center align the app container.",
+    "Always use modern button styles (sharp or slightly rounded).",
+    "NEVER use AI assistant Emoji characters.",
+    "Every interaction needs micro-animations.",
+    "Use 2-3x more spacing than feels comfortable.",
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Components MUST use named exports.",
+    "Pages MUST use default exports."
+  ]
+}
