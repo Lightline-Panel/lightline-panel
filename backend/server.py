@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy import select, func, desc, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,7 +15,6 @@ import secrets
 import hashlib
 import platform
 import uuid
-import random
 from pathlib import Path
 from dotenv import load_dotenv
 import pyotp
@@ -28,7 +27,7 @@ from database import async_session, get_db, engine, Base
 from models import Admin, Node, VPNUser, TrafficLog, License, AuditLog, PanelSettings
 from auth import (hash_password, verify_password, create_access_token,
                   create_refresh_token, decode_token, get_current_admin)
-from outline_client import OutlineClient
+from ss_manager import generate_password, build_ss_url, SS_METHOD
 from cache import cache_get_json, cache_set_json, cache_delete, close_redis
 from license_client import (
     is_external_license_server_configured,
@@ -38,7 +37,6 @@ from license_client import (
     get_server_fingerprint as get_fingerprint_from_client,
 )
 
-OUTLINE_MODE = os.environ.get('OUTLINE_MODE', 'mock')
 LICENSE_SERVER_URL = os.environ.get('LICENSE_SERVER_URL', '')
 
 app = FastAPI(title="Lightline VPN Panel")
@@ -64,15 +62,13 @@ class RefreshRequest(BaseModel):
 class NodeCreate(BaseModel):
     name: str
     ip: str
-    api_port: int
-    api_key: str
+    ss_port: int = 8388
     country: Optional[str] = None
 
 class NodeUpdate(BaseModel):
     name: Optional[str] = None
     ip: Optional[str] = None
-    api_port: Optional[int] = None
-    api_key: Optional[str] = None
+    ss_port: Optional[int] = None
     country: Optional[str] = None
 
 class UserCreate(BaseModel):
@@ -235,7 +231,7 @@ async def get_user_qrcode(user_id: int, admin=Depends(get_current_admin), db: As
     user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
-    url = user.ss_url or user.access_url
+    url = user.access_url or user.ss_url
     if not url:
         raise HTTPException(404, "No access URL available")
     img = qrcode.make(url)
@@ -245,26 +241,18 @@ async def get_user_qrcode(user_id: int, admin=Depends(get_current_admin), db: As
     return {"qr_code": f"data:image/png;base64,{qr_b64}", "url": url}
 
 
-# ===== Public Access Endpoint (ssconf:// subscription) =====
+# ===== SS URL Helper =====
 
-def _build_ssconf_url(request: Request, access_token: str) -> str:
-    """Build ssconf:// URL from the request host"""
-    host = request.headers.get('x-forwarded-host') or request.headers.get('host') or 'localhost'
-    return f"ssconf://{host}/api/access/{access_token}"
-
-@api_router.get("/access/{access_token}", response_class=PlainTextResponse)
-async def get_access_config(access_token: str, db: AsyncSession = Depends(get_db)):
-    """Public endpoint: Outline clients fetch current SS config via ssconf:// URL"""
-    user = (await db.execute(
-        select(VPNUser).where(VPNUser.access_token == access_token)
-    )).scalar_one_or_none()
-    if not user:
-        raise HTTPException(404, "Access key not found")
-    if user.status != 'active':
-        raise HTTPException(403, "Access key disabled")
-    if not user.ss_url:
-        raise HTTPException(404, "No active connection config")
-    return PlainTextResponse(user.ss_url, media_type="text/plain")
+def _build_user_ss_url(user, node) -> str:
+    """Build a proper ss:// URL for a user on a node."""
+    if not node or not user.ss_password:
+        return ""
+    return build_ss_url(
+        password=user.ss_password,
+        host=node.ip,
+        port=node.ss_port or 8388,
+        tag=user.username,
+    )
 
 
 # ===== Dashboard =====
@@ -325,8 +313,8 @@ async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends
     for n in nodes:
         uc = (await db.execute(select(func.count(VPNUser.id)).where(VPNUser.assigned_node_id == n.id))).scalar()
         result.append({
-            "id": n.id, "name": n.name, "ip": n.ip, "api_port": n.api_port,
-            "api_key": n.api_key[:16] + "..." if len(n.api_key) > 16 else n.api_key,
+            "id": n.id, "name": n.name, "ip": n.ip,
+            "ss_port": n.ss_port or 8388,
             "country": n.country, "status": n.status,
             "last_heartbeat": n.last_heartbeat.isoformat() if n.last_heartbeat else None,
             "created_at": n.created_at.isoformat(), "user_count": uc
@@ -335,18 +323,12 @@ async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends
 
 @api_router.post("/nodes")
 async def create_node(req: NodeCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    node = Node(name=req.name, ip=req.ip, api_port=req.api_port, api_key=req.api_key, country=req.country, status='unknown')
+    node = Node(name=req.name, ip=req.ip, ss_port=req.ss_port, country=req.country, status='online')
     db.add(node)
     await db.flush()
-    client = OutlineClient(f"https://{req.ip}:{req.api_port}", req.api_key)
-    try:
-        healthy = await client.check_health()
-        node.status = 'online' if healthy else 'offline'
-        node.last_heartbeat = datetime.now(timezone.utc)
-    except Exception:
-        node.status = 'offline'
+    node.last_heartbeat = datetime.now(timezone.utc)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='node_created',
-                    details=f'Node "{req.name}" ({req.country}) added',
+                    details=f'Node "{req.name}" ({req.country}) added — SS port {req.ss_port}',
                     ip_address=request.client.host if request.client else None))
     await cache_delete('dashboard')
     return {"id": node.id, "name": node.name, "status": node.status}
@@ -382,24 +364,19 @@ async def health_check(node_id: int, admin=Depends(get_current_admin), db: Async
     node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
     if not node:
         raise HTTPException(404, "Node not found")
-    client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
     try:
-        healthy = await client.check_health()
-        node.status = 'online' if healthy else 'offline'
+        # Try to reach the node's SS port via TCP
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(node.ip, node.ss_port or 8388), timeout=5
+        )
+        writer.close()
+        await writer.wait_closed()
+        node.status = 'online'
         node.last_heartbeat = datetime.now(timezone.utc)
     except Exception:
         node.status = 'offline'
     await cache_delete('dashboard')
     return {"status": node.status, "last_heartbeat": node.last_heartbeat.isoformat() if node.last_heartbeat else None}
-
-@api_router.post("/nodes/{node_id}/sync-keys")
-async def sync_keys(node_id: int, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
-    if not node:
-        raise HTTPException(404, "Node not found")
-    client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
-    keys_data = await client.get_access_keys()
-    return {"keys": keys_data.get("accessKeys", []), "synced": True}
 
 
 # ===== User Routes =====
@@ -417,12 +394,9 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
             node_name = (await db.execute(select(Node.name).where(Node.id == u.assigned_node_id))).scalar_one_or_none()
         result.append({
             "id": u.id, "username": u.username, "traffic_limit": u.traffic_limit,
-            "device_limit": u.device_limit,
             "expire_date": u.expire_date.isoformat() if u.expire_date else None,
             "assigned_node_id": u.assigned_node_id, "node_name": node_name,
-            "outline_key_id": u.outline_key_id, "access_url": u.ss_url or u.access_url,
-            "subscription_url": u.access_url if u.access_url and u.access_url.startswith('ssconf://') else None,
-            "ss_url": u.ss_url, "access_token": u.access_token,
+            "access_url": u.access_url or u.ss_url,
             "status": u.status, "created_at": u.created_at.isoformat(), "traffic_used": traffic
         })
     return result
@@ -432,33 +406,26 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
     existing = (await db.execute(select(VPNUser).where(VPNUser.username == req.username))).scalar_one_or_none()
     if existing:
         raise HTTPException(400, "Username already exists")
+    ss_password = generate_password()
     token = secrets.token_urlsafe(32)
     user = VPNUser(
         username=req.username,
         traffic_limit=req.traffic_limit or 0,
         expire_date=datetime.fromisoformat(req.expire_date) if req.expire_date else None,
         assigned_node_id=req.assigned_node_id, status='active',
-        access_token=token
+        ss_password=ss_password, access_token=token
     )
     db.add(user)
     await db.flush()
     if req.assigned_node_id:
         node = (await db.execute(select(Node).where(Node.id == req.assigned_node_id))).scalar_one_or_none()
         if node:
-            client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
-            key_data = await client.create_access_key(name=req.username)
-            user.outline_key_id = key_data.get('id')
-            user.ss_url = key_data.get('accessUrl')
-            user.access_url = _build_ssconf_url(request, token)
-            if req.traffic_limit and req.traffic_limit > 0:
-                await client.set_data_limit(key_data['id'], req.traffic_limit)
-    else:
-        user.access_url = _build_ssconf_url(request, token)
+            user.access_url = _build_user_ss_url(user, node)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_created',
                     details=f'VPN user "{req.username}" created',
                     ip_address=request.client.host if request.client else None))
     await cache_delete('dashboard')
-    return {"id": user.id, "username": user.username, "access_url": user.ss_url or user.access_url, "outline_key_id": user.outline_key_id}
+    return {"id": user.id, "username": user.username, "access_url": user.access_url}
 
 @api_router.put("/users/{user_id}")
 async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
@@ -468,8 +435,17 @@ async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Dep
     data = req.model_dump(exclude_none=True)
     if 'expire_date' in data and data['expire_date']:
         data['expire_date'] = datetime.fromisoformat(data['expire_date'])
+    node_changed = 'assigned_node_id' in data and data['assigned_node_id'] != user.assigned_node_id
     for k, v in data.items():
         setattr(user, k, v)
+    # Regenerate ss:// URL if node changed or user has no ss_password yet
+    if node_changed or (user.assigned_node_id and not user.ss_password):
+        if not user.ss_password:
+            user.ss_password = generate_password()
+        if user.assigned_node_id:
+            node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+            if node:
+                user.access_url = _build_user_ss_url(user, node)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_updated',
                     details=f'VPN user "{user.username}" updated',
                     ip_address=request.client.host if request.client else None))
@@ -481,11 +457,6 @@ async def delete_user(user_id: int, request: Request, admin=Depends(get_current_
     user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
-    if user.outline_key_id and user.assigned_node_id:
-        node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
-        if node:
-            client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
-            await client.delete_access_key(user.outline_key_id)
     await db.execute(delete(TrafficLog).where(TrafficLog.user_id == user_id))
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_deleted',
                     details=f'VPN user "{user.username}" deleted',
@@ -504,27 +475,18 @@ async def switch_node(user_id: int, req: SwitchNodeRequest, request: Request, ad
         raise HTTPException(404, "Target node not found")
     if new_node.status != 'online':
         raise HTTPException(400, "Target node is not online")
-    if user.outline_key_id and user.assigned_node_id:
-        old_node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
-        if old_node:
-            await OutlineClient(f"https://{old_node.ip}:{old_node.api_port}", old_node.api_key).delete_access_key(user.outline_key_id)
-    new_client = OutlineClient(f"https://{new_node.ip}:{new_node.api_port}", new_node.api_key)
-    key_data = await new_client.create_access_key(name=user.username)
     user.assigned_node_id = req.node_id
-    user.outline_key_id = key_data.get('id')
-    user.ss_url = key_data.get('accessUrl')
-    if not user.access_token:
-        user.access_token = secrets.token_urlsafe(32)
-    if not user.access_url or not user.access_url.startswith('ssconf://'):
-        user.access_url = _build_ssconf_url(request, user.access_token)
+    if not user.ss_password:
+        user.ss_password = generate_password()
+    user.access_url = _build_user_ss_url(user, new_node)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_node_switched',
                     details=f'User "{user.username}" switched to "{new_node.name}"',
                     ip_address=request.client.host if request.client else None))
-    return {"message": "Node switched", "access_url": user.ss_url or user.access_url}
+    return {"message": "Node switched", "access_url": user.access_url}
 
 @api_router.post("/users/bulk-switch-node")
 async def bulk_switch_node(req: BulkSwitchNodeRequest, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    """Switch ALL active users with assigned nodes to a new target node"""
+    """Switch ALL active users with assigned nodes to a new target node."""
     new_node = (await db.execute(select(Node).where(Node.id == req.node_id))).scalar_one_or_none()
     if not new_node:
         raise HTTPException(404, "Target node not found")
@@ -534,21 +496,12 @@ async def bulk_switch_node(req: BulkSwitchNodeRequest, request: Request, admin=D
         select(VPNUser).where(VPNUser.status == 'active', VPNUser.assigned_node_id.isnot(None), VPNUser.assigned_node_id != req.node_id)
     )).scalars().all()
     switched = 0
-    new_client = OutlineClient(f"https://{new_node.ip}:{new_node.api_port}", new_node.api_key)
     for user in users:
         try:
-            if user.outline_key_id and user.assigned_node_id:
-                old_node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
-                if old_node:
-                    await OutlineClient(f"https://{old_node.ip}:{old_node.api_port}", old_node.api_key).delete_access_key(user.outline_key_id)
-            key_data = await new_client.create_access_key(name=user.username)
             user.assigned_node_id = req.node_id
-            user.outline_key_id = key_data.get('id')
-            user.ss_url = key_data.get('accessUrl')
-            if not user.access_token:
-                user.access_token = secrets.token_urlsafe(32)
-            if not user.access_url or not user.access_url.startswith('ssconf://'):
-                user.access_url = _build_ssconf_url(request, user.access_token)
+            if not user.ss_password:
+                user.ss_password = generate_password()
+            user.access_url = _build_user_ss_url(user, new_node)
             switched += 1
         except Exception as e:
             logger.error(f"Bulk switch error for user {user.username}: {e}")
@@ -678,7 +631,7 @@ async def system_fingerprint(admin=Depends(get_current_admin)):
 
 @api_router.get("/system/health")
 async def system_health():
-    return {"status": "ok", "version": "1.0.0", "mode": OUTLINE_MODE}
+    return {"status": "ok", "version": "1.0.0"}
 
 
 # ===== Audit Logs =====
@@ -743,10 +696,13 @@ async def check_all_nodes_health():
             async with async_session() as session:
                 nodes = (await session.execute(select(Node))).scalars().all()
                 for node in nodes:
-                    client = OutlineClient(f"https://{node.ip}:{node.api_port}", node.api_key)
                     try:
-                        healthy = await client.check_health()
-                        node.status = 'online' if healthy else 'offline'
+                        reader, writer = await asyncio.wait_for(
+                            asyncio.open_connection(node.ip, node.ss_port or 8388), timeout=5
+                        )
+                        writer.close()
+                        await writer.wait_closed()
+                        node.status = 'online'
                         node.last_heartbeat = datetime.now(timezone.utc)
                     except Exception:
                         node.status = 'offline'
@@ -812,7 +768,7 @@ async def startup():
             logger.warning("No active license. Activate with: docker exec -it lightline-backend python cli.py license activate <KEY>")
     asyncio.create_task(check_all_nodes_health())
     asyncio.create_task(license_heartbeat())
-    logger.info(f"Lightline VPN Panel started (mode={OUTLINE_MODE})")
+    logger.info("Lightline VPN Panel started")
 
 @app.on_event("shutdown")
 async def shutdown():

@@ -252,23 +252,12 @@ export default function UsersPage() {
               </div>
             )}
             <div className="w-full space-y-2 px-2">
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Access Key (ss://)</p>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Shadowsocks Access Key</p>
               <p className="font-mono text-[10px] text-cyan-400 text-center break-all max-w-full bg-black/50 rounded-lg p-2 border border-white/5">{qrUser?.access_url}</p>
             </div>
             <Button variant="ghost" size="sm" onClick={() => { copyToClipboard(qrUser?.access_url || '').then(ok => ok ? toast.success('Copied') : toast.error('Copy failed')); }} className="text-cyan-400 gap-2">
               <Copy className="w-3.5 h-3.5" /> Copy Access Key
             </Button>
-            {qrUser?.subscription_url && (
-              <div className="w-full space-y-2 px-2 pt-2 border-t border-white/5">
-                <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Subscription URL (ssconf:// — requires HTTPS)</p>
-                <p className="font-mono text-[10px] text-gray-500 text-center break-all max-w-full bg-black/50 rounded-lg p-2 border border-white/5">{qrUser?.subscription_url}</p>
-                <div className="flex justify-center">
-                  <Button variant="ghost" size="sm" onClick={() => { copyToClipboard(qrUser?.subscription_url || '').then(ok => ok ? toast.success('Copied') : toast.error('Copy failed')); }} className="text-gray-500 gap-2 text-xs">
-                    <Copy className="w-3 h-3" /> Copy Subscription URL
-                  </Button>
-                </div>
-              </div>
-            )}
           </div>
         </DialogContent>
       </Dialog>
@@ -300,7 +289,7 @@ export default function UsersPage() {
           <DialogHeader>
             <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>Switch All Users</DialogTitle>
             <DialogDescription className="text-gray-500 text-sm">
-              Move all active users to a different node. Their ssconf:// subscription URLs stay the same — clients auto-update.
+              Move all active users to a different node. New ss:// access URLs will be generated.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">

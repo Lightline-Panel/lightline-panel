@@ -18,7 +18,7 @@ export default function NodesPage() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', ip: '', api_port: '', api_key: '', country: '' });
+  const [form, setForm] = useState({ name: '', ip: '', ss_port: '8388', country: '' });
   const [saving, setSaving] = useState(false);
   const { t } = useI18n();
 
@@ -27,14 +27,13 @@ export default function NodesPage() {
   };
   useEffect(fetchNodes, []);
 
-  const openAdd = () => { setEditing(null); setForm({ name: '', ip: '', api_port: '', api_key: '', country: '' }); setDialogOpen(true); };
-  const openEdit = (node) => { setEditing(node); setForm({ name: node.name, ip: node.ip, api_port: String(node.api_port), api_key: '', country: node.country || '' }); setDialogOpen(true); };
+  const openAdd = () => { setEditing(null); setForm({ name: '', ip: '', ss_port: '8388', country: '' }); setDialogOpen(true); };
+  const openEdit = (node) => { setEditing(node); setForm({ name: node.name, ip: node.ip, ss_port: String(node.ss_port || 8388), country: node.country || '' }); setDialogOpen(true); };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = { ...form, api_port: parseInt(form.api_port) };
-      if (!payload.api_key && editing) delete payload.api_key;
+      const payload = { ...form, ss_port: parseInt(form.ss_port) };
       if (editing) {
         await api.put(`/nodes/${editing.id}`, payload);
         toast.success('Node updated');
@@ -76,7 +75,7 @@ export default function NodesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-white" style={{ fontFamily: 'Outfit' }}>{t('nodes.title')}</h1>
-          <p className="text-sm text-gray-500 mt-1">Manage your Outline VPN servers</p>
+          <p className="text-sm text-gray-500 mt-1">Manage your Shadowsocks VPN servers</p>
         </div>
         <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2" data-testid="add-node-button">
           <Plus className="w-4 h-4" /> {t('nodes.addNode')}
@@ -109,7 +108,7 @@ export default function NodesPage() {
                       <div className={`w-2.5 h-2.5 rounded-full ${node.status === 'online' ? 'll-status-online' : node.status === 'offline' ? 'll-status-offline' : 'll-status-unknown'}`} />
                     </TableCell>
                     <TableCell className="text-gray-200 font-medium">{node.name}</TableCell>
-                    <TableCell className="font-mono text-xs text-gray-400">{node.ip}:{node.api_port}</TableCell>
+                    <TableCell className="font-mono text-xs text-gray-400">{node.ip}:{node.ss_port || 8388}</TableCell>
                     <TableCell className="text-gray-400">{node.country || '—'}</TableCell>
                     <TableCell className="text-gray-400">{node.user_count}</TableCell>
                     <TableCell className="font-mono text-xs text-gray-500">
@@ -149,7 +148,7 @@ export default function NodesPage() {
             <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>
               {editing ? t('nodes.editNode') : t('nodes.addNode')}
             </DialogTitle>
-            <DialogDescription className="text-gray-500 text-sm">Configure Outline VPN server connection</DialogDescription>
+            <DialogDescription className="text-gray-500 text-sm">Configure Shadowsocks VPN server</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
             <div className="space-y-1.5">
@@ -164,15 +163,10 @@ export default function NodesPage() {
                   className="bg-black/50 border-white/10 font-mono text-xs text-gray-200" data-testid="node-ip-input" />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-gray-400 text-xs uppercase">{t('nodes.apiPort')}</Label>
-                <Input type="number" value={form.api_port} onChange={(e) => setForm({ ...form, api_port: e.target.value })}
-                  className="bg-black/50 border-white/10 font-mono text-xs text-gray-200" data-testid="node-port-input" />
+                <Label className="text-gray-400 text-xs uppercase">SS Port</Label>
+                <Input type="number" value={form.ss_port} onChange={(e) => setForm({ ...form, ss_port: e.target.value })}
+                  placeholder="8388" className="bg-black/50 border-white/10 font-mono text-xs text-gray-200" data-testid="node-port-input" />
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-gray-400 text-xs uppercase">{t('nodes.apiKey')}</Label>
-              <Input value={form.api_key} onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-                placeholder={editing ? '(unchanged)' : ''} className="bg-black/50 border-white/10 font-mono text-xs text-gray-200" data-testid="node-key-input" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('nodes.country')}</Label>

@@ -46,7 +46,6 @@ services:
     environment:
       POSTGRES_URL: postgresql+asyncpg://lightline:${POSTGRES_PASSWORD:-changeme}@postgres:5432/lightline
       JWT_SECRET: ${JWT_SECRET:-change-me-to-a-random-secret}
-      OUTLINE_MODE: ${OUTLINE_MODE:-mock}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:80}
       LICENSE_SERVER_URL: ${LICENSE_SERVER_URL:-}
       REDIS_URL: redis://redis:6379/0

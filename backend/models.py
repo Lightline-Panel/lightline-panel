@@ -23,8 +23,9 @@ class Node(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
     ip = Column(String(45), nullable=False)
-    api_port = Column(Integer, nullable=False)
-    api_key = Column(Text, nullable=False)
+    api_port = Column(Integer, nullable=True)  # legacy (Outline), now used as node agent port
+    api_key = Column(Text, nullable=True)  # legacy (Outline), now used as node_token
+    ss_port = Column(Integer, default=8388)  # Shadowsocks listen port on the node
     country = Column(String(100))
     status = Column(String(20), default='unknown')
     last_heartbeat = Column(TZDateTime, nullable=True)
@@ -35,14 +36,15 @@ class VPNUser(Base):
     __tablename__ = 'vpn_users'
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(100), unique=True, nullable=False)
-    password_hash = Column(String(255), nullable=True)
+    password_hash = Column(String(255), nullable=True)  # legacy
     traffic_limit = Column(BigInteger, default=0)
-    device_limit = Column(Integer, default=1)
+    device_limit = Column(Integer, default=1)  # legacy
     expire_date = Column(TZDateTime, nullable=True)
     assigned_node_id = Column(Integer, ForeignKey('nodes.id', ondelete='SET NULL'), nullable=True)
-    outline_key_id = Column(String(100), nullable=True)
-    access_url = Column(Text, nullable=True)
-    ss_url = Column(Text, nullable=True)
+    outline_key_id = Column(String(100), nullable=True)  # legacy
+    ss_password = Column(String(100), nullable=True)  # Shadowsocks password for this user
+    access_url = Column(Text, nullable=True)  # ss:// URL
+    ss_url = Column(Text, nullable=True)  # legacy, same as access_url now
     access_token = Column(String(64), unique=True, nullable=True)
     status = Column(String(20), default='active')
     created_at = Column(TZDateTime, default=lambda: datetime.now(timezone.utc))

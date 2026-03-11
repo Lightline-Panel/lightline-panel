@@ -11,6 +11,7 @@ import { Plus, Key, Trash2, Loader2, Copy, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
+import { copyToClipboard } from '@/lib/clipboard';
 
 export default function LicensePage() {
   const [licenses, setLicenses] = useState([]);
@@ -100,7 +101,7 @@ export default function LicensePage() {
                         <Key className="w-3.5 h-3.5 text-cyan-400" />
                         <span className="font-mono text-xs text-gray-300">{lic.license_key}</span>
                         <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-500"
-                          onClick={() => { navigator.clipboard.writeText(lic.license_key); toast.success('Copied'); }}>
+                          onClick={() => { copyToClipboard(lic.license_key).then(ok => ok ? toast.success('Copied') : toast.error('Copy failed')); }}>
                           <Copy className="w-3 h-3" />
                         </Button>
                       </div>
