@@ -191,7 +191,7 @@ export default function UsersPage() {
                           {u.sub_url && (
                             <DropdownMenuItem
                               onClick={() => {
-                                copyToClipboard(`ssconf://${window.location.origin}${u.sub_url}`).then(ok => {
+                                copyToClipboard(`ssconf://${window.location.host}${u.sub_url}`).then(ok => {
                                   if (ok) toast.success('Sub URL copied');
                                   else toast.error('Copy failed');
                                 });
@@ -272,7 +272,7 @@ export default function UsersPage() {
                 <Copy className="w-3.5 h-3.5" /> Copy SS URL
               </Button>
               {qrUser?.sub_url && (
-                <Button variant="ghost" size="sm" onClick={() => { copyToClipboard(`ssconf://${window.location.origin}${qrUser.sub_url}`).then(ok => ok ? toast.success('Sub URL copied') : toast.error('Copy failed')); }} className="text-emerald-400 gap-2">
+                <Button variant="ghost" size="sm" onClick={() => { copyToClipboard(`ssconf://${window.location.host}${qrUser.sub_url}`).then(ok => ok ? toast.success('Sub URL copied') : toast.error('Copy failed')); }} className="text-emerald-400 gap-2">
                   <Copy className="w-3.5 h-3.5" /> Copy Sub URL
                 </Button>
               )}
@@ -281,7 +281,7 @@ export default function UsersPage() {
               <div className="w-full space-y-1 px-2">
                 <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Subscription URL (auto-updates)</p>
                 <p className="font-mono text-[10px] text-emerald-400 text-center break-all max-w-full bg-black/50 rounded-lg p-2 border border-white/5">
-                  ssconf://{window.location.origin}{qrUser.sub_url}
+                  ssconf://{window.location.host}{qrUser.sub_url}
                 </p>
               </div>
             )}

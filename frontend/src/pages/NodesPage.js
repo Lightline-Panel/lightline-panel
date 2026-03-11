@@ -83,6 +83,15 @@ export default function NodesPage() {
     setRefreshing(false);
   };
 
+  const regenerateUrls = async () => {
+    try {
+      const { data } = await api.post('/nodes/regenerate-urls');
+      toast.success(data.message);
+    } catch {
+      toast.error('URL regeneration failed');
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="nodes-page">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -94,6 +103,10 @@ export default function NodesPage() {
           <Button onClick={refreshAll} disabled={refreshing} variant="outline"
             className="border-white/10 text-gray-300 gap-2 flex-1 sm:flex-none" data-testid="refresh-all-button">
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+          </Button>
+          <Button onClick={regenerateUrls} variant="outline"
+            className="border-white/10 text-gray-300 gap-2 flex-1 sm:flex-none">
+            <RefreshCw className="w-4 h-4" /> Regen URLs
           </Button>
           <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 flex-1 sm:flex-none" data-testid="add-node-button">
             <Plus className="w-4 h-4" /> {t('nodes.addNode')}
