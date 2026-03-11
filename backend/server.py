@@ -30,6 +30,13 @@ from auth import (hash_password, verify_password, create_access_token,
                   create_refresh_token, decode_token, get_current_admin)
 from outline_client import OutlineClient
 from cache import cache_get_json, cache_set_json, cache_delete, close_redis
+from license_client import (
+    is_external_license_server_configured,
+    activate_license as external_activate_license,
+    validate_license as external_validate_license,
+    heartbeat as external_heartbeat,
+    get_server_fingerprint as get_fingerprint_from_client,
+)
 
 OUTLINE_MODE = os.environ.get('OUTLINE_MODE', 'mock')
 LICENSE_SERVER_URL = os.environ.get('LICENSE_SERVER_URL', '')
@@ -638,6 +645,16 @@ async def revoke_license(license_id: int, request: Request, admin=Depends(get_cu
 
 @api_router.post("/licenses/validate")
 async def validate_license(req: LicenseValidate, db: AsyncSession = Depends(get_db)):
+    # Use external license server if configured
+    if is_external_license_server_configured():
+        result = await external_validate_license(req.license_key)
+        if result.get('valid'):
+            return {"valid": True, "expires_at": result.get('expires_at'),
+                    "max_servers": result.get('max_servers'),
+                    "activated_servers": result.get('activated_servers')}
+        return {"valid": False, "reason": result.get('error', 'Validation failed')}
+
+    # Fallback: local validation
     lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
     if not lic:
         return {"valid": False, "reason": "License key not found"}
@@ -654,6 +671,30 @@ async def validate_license(req: LicenseValidate, db: AsyncSession = Depends(get_
 
 @api_router.post("/licenses/activate")
 async def activate_license(req: LicenseActivate, request: Request, db: AsyncSession = Depends(get_db)):
+    # Use external license server if configured
+    if is_external_license_server_configured():
+        result = await external_activate_license(req.license_key, hostname=platform.node())
+        if result.get('success'):
+            # Store/update local license record for dashboard display
+            lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
+            if not lic:
+                lic = License(license_key=req.license_key, expire_days=0, max_servers=1,
+                              activated_servers=1, status='active',
+                              server_fingerprint=get_server_fingerprint())
+                db.add(lic)
+            else:
+                lic.status = 'active'
+                lic.server_fingerprint = get_server_fingerprint()
+            db.add(AuditLog(admin_id=None, action='license_activated',
+                            details=f'License activated via external server: {req.license_key[:16]}...',
+                            ip_address=request.client.host if request.client else None))
+            return {"activated": True, "message": result.get('message'),
+                    "server_id": result.get('server_id'),
+                    "expires_at": result.get('expires_at'),
+                    "fingerprint": get_server_fingerprint()}
+        return {"activated": False, "reason": result.get('error', 'Activation failed')}
+
+    # Fallback: local activation
     lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
     if not lic:
         return {"activated": False, "reason": "License key not found"}
@@ -786,30 +827,29 @@ async def license_heartbeat():
                     select(License).where(License.status == 'active').limit(1)
                 )).scalar_one_or_none()
                 if lic:
-                    expire_date = lic.created_at + timedelta(days=lic.expire_days)
-                    if datetime.now(timezone.utc) > expire_date:
-                        lic.status = 'expired'
-                        logger.warning("License expired — panel suspended")
-                    elif lic.server_fingerprint and lic.server_fingerprint != get_server_fingerprint():
-                        lic.status = 'suspended'
-                        logger.warning("License fingerprint mismatch — panel suspended")
+                    # External license server heartbeat (preferred)
+                    if is_external_license_server_configured():
+                        result = await external_heartbeat(lic.license_key)
+                        if result.get('success'):
+                            logger.info(f"External heartbeat OK — expires at {result.get('expires_at')}")
+                        else:
+                            error = result.get('error', 'Unknown')
+                            logger.warning(f"External heartbeat failed: {error}")
+                            # Only suspend on definitive failures, not timeouts
+                            if 'timeout' not in error.lower() and 'unreachable' not in error.lower():
+                                lic.status = 'suspended'
+                                logger.warning("License suspended by external server")
                     else:
-                        logger.info(f"License heartbeat OK — expires in {(expire_date - datetime.now(timezone.utc)).days} days")
-                    if LICENSE_SERVER_URL:
-                        try:
-                            import aiohttp
-                            async with aiohttp.ClientSession() as http:
-                                async with http.post(f"{LICENSE_SERVER_URL}/api/validate", json={
-                                    "license_key": lic.license_key,
-                                    "fingerprint": get_server_fingerprint()
-                                }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                                    if resp.status == 200:
-                                        body = await resp.json()
-                                        if not body.get('valid'):
-                                            lic.status = 'suspended'
-                                            logger.warning(f"External license validation failed: {body.get('reason')}")
-                        except Exception as e:
-                            logger.error(f"License server unreachable: {e}")
+                        # Local-only validation
+                        expire_date = lic.created_at + timedelta(days=lic.expire_days)
+                        if datetime.now(timezone.utc) > expire_date:
+                            lic.status = 'expired'
+                            logger.warning("License expired — panel suspended")
+                        elif lic.server_fingerprint and lic.server_fingerprint != get_server_fingerprint():
+                            lic.status = 'suspended'
+                            logger.warning("License fingerprint mismatch — panel suspended")
+                        else:
+                            logger.info(f"License heartbeat OK — expires in {(expire_date - datetime.now(timezone.utc)).days} days")
                     await session.commit()
                 else:
                     logger.info("No active license found")

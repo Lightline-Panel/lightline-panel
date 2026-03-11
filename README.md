@@ -100,6 +100,87 @@ docker compose exec backend python cli.py license show
 
 ---
 
+## License Server Integration
+
+Lightline Panel supports an external **Lightline License Server** for centralized license management across multiple panel instances.
+
+### Setup
+
+1. **Deploy the license server** (separate repo: [lightline-license-server](https://github.com/Lightline-Panel/lightline-license-server))
+
+   ```bash
+   git clone https://github.com/Lightline-Panel/lightline-license-server.git
+   cd lightline-license-server/docker
+   cp .env.example .env  # edit with strong secrets
+   docker compose up -d --build
+   ```
+
+   The license server runs on port `8000` with an admin dashboard on port `80`.
+
+2. **Create a license key** on the license server:
+
+   ```bash
+   # Via CLI script
+   python scripts/generate_license.py \
+     --url http://YOUR_LICENSE_SERVER:8000 \
+     --username admin --password admin \
+     --expire-days 365 --max-servers 5
+
+   # Or via the admin dashboard at http://YOUR_LICENSE_SERVER
+   ```
+
+3. **Configure the panel** to use the license server:
+
+   Add to your panel's `.env` file:
+   ```env
+   LICENSE_SERVER_URL=http://YOUR_LICENSE_SERVER:8000
+   LICENSE_SERVER_TIMEOUT=10
+   ```
+
+   Or in `docker-compose.yml`:
+   ```yaml
+   environment:
+     LICENSE_SERVER_URL: http://YOUR_LICENSE_SERVER:8000
+   ```
+
+4. **Activate the license** in the panel:
+
+   - Go to the panel dashboard → **Licenses** page
+   - Enter the license key generated in step 2
+   - Click **Activate** — the panel sends its server fingerprint to the license server
+
+   Or via API:
+   ```bash
+   curl -X POST http://YOUR_PANEL:8000/api/licenses/activate \
+     -H 'Content-Type: application/json' \
+     -d '{"license_key": "ABCD1234-EFGH5678-IJKL9012-MNOP3456-QRST7890"}'
+   ```
+
+### How It Works
+
+| Action | Flow |
+|---|---|
+| **Activate** | Panel → `POST /api/v1/license/activate` → License Server binds key to server fingerprint |
+| **Validate** | Panel → `POST /api/v1/license/validate` → License Server checks key + fingerprint |
+| **Heartbeat** | Panel sends heartbeat every 6 hours → License Server confirms license is still valid |
+| **Revoke** | Admin revokes on License Server → next panel heartbeat suspends the panel |
+
+- The panel generates a **server fingerprint** from hostname + machine ID + MAC address
+- If the license server is unreachable (timeout), the panel **does not** suspend — only definitive failures cause suspension
+- When `LICENSE_SERVER_URL` is empty, the panel falls back to **local-only** license management
+
+### License Server Admin Dashboard
+
+The license server includes a React admin dashboard with:
+- **License list** — create, view, revoke keys
+- **Activation log** — see which servers activated which keys
+- **Blacklist** — block specific server fingerprints
+- **Audit log** — full history of all actions
+
+Access at `http://YOUR_LICENSE_SERVER` (default login: `admin` / `admin`).
+
+---
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -108,7 +189,8 @@ docker compose exec backend python cli.py license show
 | `JWT_SECRET` | — | Secret key for JWT token signing |
 | `OUTLINE_MODE` | `mock` | `mock` for dev, `live` for production |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
-| `LICENSE_SERVER_URL` | — | External license validation endpoint |
+| `LICENSE_SERVER_URL` | — | External license server URL (e.g. `http://license.example.com:8000`) |
+| `LICENSE_SERVER_TIMEOUT` | `10` | License server request timeout in seconds |
 | `REDIS_URL` | — | Redis connection string |
 | `PANEL_PORT` | `80` | Frontend port (Docker) |
 | `POSTGRES_PASSWORD` | `changeme` | PostgreSQL password (Docker) |
