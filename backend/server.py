@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy import select, func, desc, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,12 +8,18 @@ from typing import Optional
 from datetime import datetime, timezone, timedelta
 import asyncio
 import os
+import io
+import base64
 import logging
 import secrets
 import hashlib
+import platform
+import uuid
 import random
 from pathlib import Path
 from dotenv import load_dotenv
+import pyotp
+import qrcode
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -23,8 +29,10 @@ from models import Admin, Node, VPNUser, TrafficLog, License, AuditLog, PanelSet
 from auth import (hash_password, verify_password, create_access_token,
                   create_refresh_token, decode_token, get_current_admin)
 from outline_client import OutlineClient
+from cache import cache_get_json, cache_set_json, cache_delete, close_redis
 
 OUTLINE_MODE = os.environ.get('OUTLINE_MODE', 'mock')
+LICENSE_SERVER_URL = os.environ.get('LICENSE_SERVER_URL', '')
 
 app = FastAPI(title="Lightline VPN Panel")
 api_router = APIRouter(prefix="/api")
@@ -97,6 +105,24 @@ class LicenseValidate(BaseModel):
 class SettingsUpdate(BaseModel):
     settings: dict
 
+class TOTPEnableRequest(BaseModel):
+    totp_code: str
+
+class TOTPDisableRequest(BaseModel):
+    totp_code: str
+
+class LoginTOTPRequest(BaseModel):
+    username: str
+    password: str
+    totp_code: Optional[str] = None
+
+class LicenseActivate(BaseModel):
+    license_key: str
+
+class TOTPConfirmRequest(BaseModel):
+    secret: str
+    code: str
+
 
 # ===== Auth Routes =====
 
@@ -120,12 +146,18 @@ async def setup_admin(req: SetupRequest, db: AsyncSession = Depends(get_db)):
     db.add(AuditLog(admin_id=admin.id, action='admin_setup', details='Initial admin account created'))
     return {"message": "Admin created successfully", "username": req.username}
 
-@api_router.post("/auth/login", response_model=TokenResponse)
-async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+@api_router.post("/auth/login")
+async def login(req: LoginTOTPRequest, request: Request, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Admin).where(Admin.username == req.username))
     admin = result.scalar_one_or_none()
     if not admin or not verify_password(req.password, admin.password_hash):
         raise HTTPException(401, "Invalid credentials")
+    if admin.totp_secret:
+        if not req.totp_code:
+            return {"requires_totp": True, "message": "TOTP code required"}
+        totp = pyotp.TOTP(admin.totp_secret)
+        if not totp.verify(req.totp_code, valid_window=1):
+            raise HTTPException(401, "Invalid TOTP code")
     token_data = {"sub": str(admin.id), "username": admin.username, "role": admin.role}
     db.add(AuditLog(admin_id=admin.id, action='login', ip_address=request.client.host if request.client else None))
     return TokenResponse(
@@ -150,7 +182,78 @@ async def get_me(admin=Depends(get_current_admin), db: AsyncSession = Depends(ge
     a = result.scalar_one_or_none()
     if not a:
         raise HTTPException(404, "Admin not found")
-    return {"id": a.id, "username": a.username, "role": a.role, "created_at": a.created_at.isoformat()}
+    return {"id": a.id, "username": a.username, "role": a.role,
+            "totp_enabled": bool(a.totp_secret), "created_at": a.created_at.isoformat()}
+
+
+# ===== TOTP 2FA =====
+
+@api_router.post("/auth/totp/setup")
+async def totp_setup(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    a = (await db.execute(select(Admin).where(Admin.id == int(admin["sub"])))).scalar_one_or_none()
+    if not a:
+        raise HTTPException(404, "Admin not found")
+    if a.totp_secret:
+        raise HTTPException(400, "TOTP already enabled. Disable first.")
+    secret = pyotp.random_base32()
+    totp = pyotp.TOTP(secret)
+    provisioning_uri = totp.provisioning_uri(name=a.username, issuer_name="Lightline VPN")
+    img = qrcode.make(provisioning_uri)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+    return {"secret": secret, "provisioning_uri": provisioning_uri,
+            "qr_code": f"data:image/png;base64,{qr_b64}"}
+
+@api_router.post("/auth/totp/confirm")
+async def totp_confirm(req: TOTPConfirmRequest, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    a = (await db.execute(select(Admin).where(Admin.id == int(admin["sub"])))).scalar_one_or_none()
+    if not a:
+        raise HTTPException(404, "Admin not found")
+    totp = pyotp.TOTP(req.secret)
+    if not totp.verify(req.code, valid_window=1):
+        raise HTTPException(400, "Invalid TOTP code. Try again.")
+    a.totp_secret = req.secret
+    db.add(AuditLog(admin_id=a.id, action='totp_enabled', details='TOTP 2FA enabled'))
+    return {"message": "TOTP 2FA enabled successfully"}
+
+@api_router.post("/auth/totp/disable")
+async def totp_disable(req: TOTPDisableRequest, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    a = (await db.execute(select(Admin).where(Admin.id == int(admin["sub"])))).scalar_one_or_none()
+    if not a:
+        raise HTTPException(404, "Admin not found")
+    if not a.totp_secret:
+        raise HTTPException(400, "TOTP is not enabled")
+    totp = pyotp.TOTP(a.totp_secret)
+    if not totp.verify(req.totp_code, valid_window=1):
+        raise HTTPException(401, "Invalid TOTP code")
+    a.totp_secret = None
+    db.add(AuditLog(admin_id=a.id, action='totp_disabled', details='TOTP 2FA disabled'))
+    return {"message": "TOTP 2FA disabled"}
+
+
+# ===== Server Fingerprint =====
+
+def get_server_fingerprint() -> str:
+    raw = f"{platform.node()}-{platform.machine()}-{uuid.getnode()}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+# ===== QR Code Generation =====
+
+@api_router.get("/users/{user_id}/qrcode")
+async def get_user_qrcode(user_id: int, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    url = user.access_url or user.ss_url
+    if not url:
+        raise HTTPException(404, "No access URL available")
+    img = qrcode.make(url)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+    return {"qr_code": f"data:image/png;base64,{qr_b64}", "url": url}
 
 
 # ===== Public Access Endpoint (ssconf:// subscription) =====
@@ -179,6 +282,9 @@ async def get_access_config(access_token: str, db: AsyncSession = Depends(get_db
 
 @api_router.get("/dashboard")
 async def get_dashboard(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    cached = await cache_get_json('dashboard')
+    if cached:
+        return cached
     nodes_total = (await db.execute(select(func.count(Node.id)))).scalar()
     nodes_online = (await db.execute(select(func.count(Node.id)).where(Node.status == 'online'))).scalar()
     users_total = (await db.execute(select(func.count(VPNUser.id)))).scalar()
@@ -197,7 +303,7 @@ async def get_dashboard(admin=Depends(get_current_admin), db: AsyncSession = Dep
     logs = (await db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)).limit(10))).scalars().all()
     nodes = (await db.execute(select(Node).order_by(Node.name))).scalars().all()
 
-    return {
+    result = {
         "nodes": {"total": nodes_total, "online": nodes_online, "offline": nodes_total - nodes_online},
         "users": {"total": users_total, "active": users_active},
         "traffic": {"today": traffic_today, "total": traffic_total},
@@ -217,6 +323,8 @@ async def get_dashboard(admin=Depends(get_current_admin), db: AsyncSession = Dep
             for n in nodes
         ]
     }
+    await cache_set_json('dashboard', result, ttl=30)
+    return result
 
 
 # ===== Node Routes =====
@@ -251,6 +359,7 @@ async def create_node(req: NodeCreate, request: Request, admin=Depends(get_curre
     db.add(AuditLog(admin_id=int(admin["sub"]), action='node_created',
                     details=f'Node "{req.name}" ({req.country}) added',
                     ip_address=request.client.host if request.client else None))
+    await cache_delete('dashboard')
     return {"id": node.id, "name": node.name, "status": node.status}
 
 @api_router.put("/nodes/{node_id}")
@@ -263,6 +372,7 @@ async def update_node(node_id: int, req: NodeUpdate, request: Request, admin=Dep
     db.add(AuditLog(admin_id=int(admin["sub"]), action='node_updated',
                     details=f'Node "{node.name}" updated',
                     ip_address=request.client.host if request.client else None))
+    await cache_delete('dashboard')
     return {"message": "Node updated"}
 
 @api_router.delete("/nodes/{node_id}")
@@ -275,6 +385,7 @@ async def delete_node(node_id: int, request: Request, admin=Depends(get_current_
                     details=f'Node "{node.name}" deleted',
                     ip_address=request.client.host if request.client else None))
     await db.delete(node)
+    await cache_delete('dashboard')
     return {"message": "Node deleted"}
 
 @api_router.post("/nodes/{node_id}/health-check")
@@ -289,6 +400,7 @@ async def health_check(node_id: int, admin=Depends(get_current_admin), db: Async
         node.last_heartbeat = datetime.now(timezone.utc)
     except Exception:
         node.status = 'offline'
+    await cache_delete('dashboard')
     return {"status": node.status, "last_heartbeat": node.last_heartbeat.isoformat() if node.last_heartbeat else None}
 
 @api_router.post("/nodes/{node_id}/sync-keys")
@@ -357,6 +469,7 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_created',
                     details=f'VPN user "{req.username}" created',
                     ip_address=request.client.host if request.client else None))
+    await cache_delete('dashboard')
     return {"id": user.id, "username": user.username, "access_url": user.access_url, "outline_key_id": user.outline_key_id}
 
 @api_router.put("/users/{user_id}")
@@ -374,6 +487,7 @@ async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Dep
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_updated',
                     details=f'VPN user "{user.username}" updated',
                     ip_address=request.client.host if request.client else None))
+    await cache_delete('dashboard')
     return {"message": "User updated"}
 
 @api_router.delete("/users/{user_id}")
@@ -391,6 +505,7 @@ async def delete_user(user_id: int, request: Request, admin=Depends(get_current_
                     details=f'VPN user "{user.username}" deleted',
                     ip_address=request.client.host if request.client else None))
     await db.delete(user)
+    await cache_delete('dashboard')
     return {"message": "User deleted"}
 
 @api_router.post("/users/{user_id}/switch-node")
@@ -537,6 +652,36 @@ async def validate_license(req: LicenseValidate, db: AsyncSession = Depends(get_
     return {"valid": True, "expires_in_days": (expire_date - datetime.now(timezone.utc)).days,
             "max_servers": lic.max_servers, "activated_servers": lic.activated_servers}
 
+@api_router.post("/licenses/activate")
+async def activate_license(req: LicenseActivate, request: Request, db: AsyncSession = Depends(get_db)):
+    lic = (await db.execute(select(License).where(License.license_key == req.license_key))).scalar_one_or_none()
+    if not lic:
+        return {"activated": False, "reason": "License key not found"}
+    if lic.status != 'active':
+        return {"activated": False, "reason": f"License is {lic.status}"}
+    expire_date = lic.created_at + timedelta(days=lic.expire_days)
+    if datetime.now(timezone.utc) > expire_date:
+        lic.status = 'expired'
+        return {"activated": False, "reason": "License expired"}
+    fingerprint = get_server_fingerprint()
+    if lic.server_fingerprint and lic.server_fingerprint != fingerprint:
+        return {"activated": False, "reason": "License bound to a different server"}
+    if not lic.server_fingerprint:
+        if lic.activated_servers >= lic.max_servers:
+            return {"activated": False, "reason": "Maximum activations reached"}
+        lic.server_fingerprint = fingerprint
+        lic.activated_servers += 1
+    return {"activated": True, "expires_in_days": (expire_date - datetime.now(timezone.utc)).days,
+            "fingerprint": fingerprint}
+
+@api_router.get("/system/fingerprint")
+async def system_fingerprint(admin=Depends(get_current_admin)):
+    return {"fingerprint": get_server_fingerprint()}
+
+@api_router.get("/system/health")
+async def system_health():
+    return {"status": "ok", "version": "1.0.0", "mode": OUTLINE_MODE}
+
 
 # ===== Audit Logs =====
 
@@ -632,6 +777,46 @@ async def generate_mock_traffic():
             logger.error(f"Mock traffic error: {e}")
         await asyncio.sleep(3600)
 
+async def license_heartbeat():
+    """Validate license every 6 hours. Suspend panel if invalid."""
+    while True:
+        try:
+            async with async_session() as session:
+                lic = (await session.execute(
+                    select(License).where(License.status == 'active').limit(1)
+                )).scalar_one_or_none()
+                if lic:
+                    expire_date = lic.created_at + timedelta(days=lic.expire_days)
+                    if datetime.now(timezone.utc) > expire_date:
+                        lic.status = 'expired'
+                        logger.warning("License expired — panel suspended")
+                    elif lic.server_fingerprint and lic.server_fingerprint != get_server_fingerprint():
+                        lic.status = 'suspended'
+                        logger.warning("License fingerprint mismatch — panel suspended")
+                    else:
+                        logger.info(f"License heartbeat OK — expires in {(expire_date - datetime.now(timezone.utc)).days} days")
+                    if LICENSE_SERVER_URL:
+                        try:
+                            import aiohttp
+                            async with aiohttp.ClientSession() as http:
+                                async with http.post(f"{LICENSE_SERVER_URL}/api/validate", json={
+                                    "license_key": lic.license_key,
+                                    "fingerprint": get_server_fingerprint()
+                                }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                    if resp.status == 200:
+                                        body = await resp.json()
+                                        if not body.get('valid'):
+                                            lic.status = 'suspended'
+                                            logger.warning(f"External license validation failed: {body.get('reason')}")
+                        except Exception as e:
+                            logger.error(f"License server unreachable: {e}")
+                    await session.commit()
+                else:
+                    logger.info("No active license found")
+        except Exception as e:
+            logger.error(f"License heartbeat error: {e}")
+        await asyncio.sleep(21600)  # 6 hours
+
 
 async def seed_mock_data():
     async with async_session() as session:
@@ -708,12 +893,14 @@ async def startup():
     if OUTLINE_MODE == 'mock':
         await seed_mock_data()
     asyncio.create_task(check_all_nodes_health())
+    asyncio.create_task(license_heartbeat())
     if OUTLINE_MODE == 'mock':
         asyncio.create_task(generate_mock_traffic())
     logger.info(f"Lightline VPN Panel started (mode={OUTLINE_MODE})")
 
 @app.on_event("shutdown")
 async def shutdown():
+    await close_redis()
     await engine.dispose()
 
 app.include_router(api_router)

@@ -26,8 +26,11 @@ export function AuthProvider({ children }) {
 
   useEffect(() => { checkAuth(); }, [checkAuth]);
 
-  const login = async (username, password) => {
-    const { data } = await api.post('/auth/login', { username, password });
+  const login = async (username, password, totp_code) => {
+    const { data } = await api.post('/auth/login', { username, password, totp_code });
+    if (data.requires_totp) {
+      return { requires_totp: true };
+    }
     localStorage.setItem('lightline_token', data.access_token);
     localStorage.setItem('lightline_refresh', data.refresh_token);
     const me = await api.get('/auth/me');

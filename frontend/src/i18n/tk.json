@@ -38,7 +38,8 @@
     "submit": "Girmek",
     "setup": "Admin hasaby döretmek",
     "setupDesc": "Admin hasabyňyzy sazlaň",
-    "error": "Nädogry maglumatlar"
+    "error": "Nädogry maglumatlar",
+    "totpCode": "2FA kody"
   },
   "dashboard": {
     "title": "Baş sahypa",
@@ -115,7 +116,15 @@
     "createBackup": "Ätiýaçlyk nusgasyny döretmek",
     "panelInfo": "Panel maglumaty",
     "version": "Wersiýa",
-    "mode": "Rejim"
+    "mode": "Rejim",
+    "twoFactor": "Iki faktorly tassyklama",
+    "twoFactorDesc": "TOTP bilen goşmaça howpsuzlyk goşuň.",
+    "twoFactorStatus": "2FA ýagdaýy",
+    "twoFactorEnabled": "Açyk — hasabyňyz goragly",
+    "twoFactorDisabled": "Ýapyk — açmagy maslahat berýäris",
+    "enable2FA": "2FA açmak",
+    "disable2FA": "2FA ýapmak",
+    "setup2FA": "Iki faktorly tassyklama sazlamasy"
   },
   "audit": {
     "title": "Ýazgylar",

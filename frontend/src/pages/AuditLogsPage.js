@@ -22,6 +22,9 @@ const actionColors = {
   settings_updated: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
   backup_created: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
   admin_setup: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
+  totp_enabled: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  totp_disabled: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  bulk_node_switch: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
 };
 
 export default function AuditLogsPage() {

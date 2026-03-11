@@ -38,7 +38,8 @@
     "submit": "Sign In",
     "setup": "Create Admin Account",
     "setupDesc": "Set up your admin account to get started",
-    "error": "Invalid credentials"
+    "error": "Invalid credentials",
+    "totpCode": "2FA Code"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -115,7 +116,15 @@
     "createBackup": "Create Backup",
     "panelInfo": "Panel Information",
     "version": "Version",
-    "mode": "Mode"
+    "mode": "Mode",
+    "twoFactor": "Two-Factor Authentication",
+    "twoFactorDesc": "Add an extra layer of security with TOTP-based 2FA.",
+    "twoFactorStatus": "2FA Status",
+    "twoFactorEnabled": "Enabled — your account is protected",
+    "twoFactorDisabled": "Disabled — consider enabling for security",
+    "enable2FA": "Enable 2FA",
+    "disable2FA": "Disable 2FA",
+    "setup2FA": "Setup Two-Factor Authentication"
   },
   "audit": {
     "title": "Audit Logs",

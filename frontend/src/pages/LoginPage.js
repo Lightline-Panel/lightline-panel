@@ -13,6 +13,8 @@ import { motion } from 'framer-motion';
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [needsTotp, setNeedsTotp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [setupMode, setSetupMode] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -37,7 +39,12 @@ export default function LoginPage() {
         toast.success('Admin account created');
         setSetupMode(false);
       }
-      await login(username, password);
+      const result = await login(username, password, totpCode || undefined);
+      if (result?.requires_totp) {
+        setNeedsTotp(true);
+        setLoading(false);
+        return;
+      }
       navigate('/');
     } catch (err) {
       toast.error(err.response?.data?.detail || t('login.error'));
@@ -103,6 +110,25 @@ export default function LoginPage() {
                 required
               />
             </div>
+            {needsTotp && (
+              <div className="space-y-2">
+                <Label htmlFor="totp" className="text-gray-400 text-xs uppercase tracking-wider">
+                  {t('login.totpCode')}
+                </Label>
+                <Input
+                  id="totp"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  placeholder="000000"
+                  maxLength={6}
+                  className="bg-black/50 border-white/10 focus:border-cyan-500/50 h-11 text-gray-200 font-mono text-center text-lg tracking-[0.5em]"
+                  data-testid="login-totp-input"
+                  autoFocus
+                  required
+                />
+                <p className="text-xs text-gray-500 text-center">Enter the 6-digit code from your authenticator app</p>
+              </div>
+            )}
             <Button
               type="submit"
               disabled={loading}

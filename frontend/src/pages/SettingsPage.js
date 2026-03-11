@@ -3,11 +3,13 @@ import { useI18n } from '@/contexts/I18nContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { Download, Upload, Globe, Moon, Sun, Info, Shield } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Download, Upload, Globe, Moon, Sun, Info, Shield, Loader2, ShieldCheck, ShieldOff } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
@@ -17,6 +19,11 @@ export default function SettingsPage() {
   const { user } = useAuth();
   const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
   const [settings, setSettings] = useState({});
+  const [totpSetup, setTotpSetup] = useState(null);
+  const [totpCode, setTotpCode] = useState('');
+  const [totpLoading, setTotpLoading] = useState(false);
+  const [disableOpen, setDisableOpen] = useState(false);
+  const [disableCode, setDisableCode] = useState('');
 
   useEffect(() => {
     api.get('/settings').then(({ data }) => setSettings(data)).catch(() => {});
@@ -41,6 +48,46 @@ export default function SettingsPage() {
       a.click(); URL.revokeObjectURL(url);
       toast.success('Backup downloaded');
     } catch { toast.error('Backup failed'); }
+  };
+
+  const handleTotpSetup = async () => {
+    setTotpLoading(true);
+    try {
+      const { data } = await api.post('/auth/totp/setup');
+      setTotpSetup(data);
+      setTotpCode('');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to setup TOTP');
+    }
+    setTotpLoading(false);
+  };
+
+  const handleTotpConfirm = async () => {
+    if (!totpCode || totpCode.length !== 6) { toast.error('Enter a 6-digit code'); return; }
+    setTotpLoading(true);
+    try {
+      await api.post('/auth/totp/confirm', { secret: totpSetup.secret, code: totpCode });
+      toast.success('2FA enabled successfully');
+      setTotpSetup(null);
+      setTotpCode('');
+      window.location.reload();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Invalid code');
+    }
+    setTotpLoading(false);
+  };
+
+  const handleTotpDisable = async () => {
+    if (!disableCode || disableCode.length !== 6) { toast.error('Enter a 6-digit code'); return; }
+    try {
+      await api.post('/auth/totp/disable', { totp_code: disableCode });
+      toast.success('2FA disabled');
+      setDisableOpen(false);
+      setDisableCode('');
+      window.location.reload();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Invalid code');
+    }
   };
 
   return (
@@ -161,7 +208,102 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </motion.div>
+
+        {/* 2FA Security */}
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+          <Card className="ll-card border-white/5">
+            <CardHeader>
+              <CardTitle className="text-base text-white flex items-center gap-2" style={{ fontFamily: 'Outfit' }}>
+                <ShieldCheck className="w-4 h-4 text-cyan-400" /> {t('settings.twoFactor')}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-gray-400">{t('settings.twoFactorDesc')}</p>
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label className="text-gray-300">{t('settings.twoFactorStatus')}</Label>
+                  <p className="text-xs text-gray-500">
+                    {user?.totp_enabled ? t('settings.twoFactorEnabled') : t('settings.twoFactorDisabled')}
+                  </p>
+                </div>
+                <div className={`w-2.5 h-2.5 rounded-full ${user?.totp_enabled ? 'll-status-online' : 'll-status-offline'}`} />
+              </div>
+              {user?.totp_enabled ? (
+                <Button variant="outline" onClick={() => { setDisableOpen(true); setDisableCode(''); }}
+                  className="w-full border-red-500/20 text-red-400 hover:bg-red-500/10 gap-2" data-testid="disable-2fa-button">
+                  <ShieldOff className="w-4 h-4" /> {t('settings.disable2FA')}
+                </Button>
+              ) : (
+                <Button onClick={handleTotpSetup} disabled={totpLoading}
+                  className="w-full bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2" data-testid="enable-2fa-button">
+                  {totpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                  {t('settings.enable2FA')}
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
+
+      {/* TOTP Setup Dialog */}
+      <Dialog open={!!totpSetup} onOpenChange={() => setTotpSetup(null)}>
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('settings.setup2FA')}</DialogTitle>
+            <DialogDescription className="text-gray-500 text-sm">Scan this QR code with your authenticator app</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-4 py-4">
+            {totpSetup?.qr_code && (
+              <div className="rounded-xl overflow-hidden">
+                <img src={totpSetup.qr_code} alt="TOTP QR Code" className="w-48 h-48" data-testid="totp-qr-code" />
+              </div>
+            )}
+            <div className="w-full space-y-1 px-2">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Manual Entry Key</p>
+              <p className="font-mono text-xs text-cyan-400 text-center break-all bg-black/50 rounded-lg p-2 border border-white/5 select-all">
+                {totpSetup?.secret}
+              </p>
+            </div>
+            <div className="w-full space-y-2">
+              <Label className="text-gray-400 text-xs uppercase">Verification Code</Label>
+              <Input value={totpCode} onChange={(e) => setTotpCode(e.target.value)}
+                placeholder="000000" maxLength={6}
+                className="bg-black/50 border-white/10 text-gray-200 font-mono text-center text-lg tracking-[0.5em]"
+                data-testid="totp-confirm-input" />
+            </div>
+            <div className="flex gap-3 w-full">
+              <Button variant="ghost" onClick={() => setTotpSetup(null)} className="flex-1 text-gray-400">{t('common.cancel')}</Button>
+              <Button onClick={handleTotpConfirm} disabled={totpLoading}
+                className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold" data-testid="totp-confirm-button">
+                {totpLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : t('common.confirm')}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Disable 2FA Dialog */}
+      <Dialog open={disableOpen} onOpenChange={setDisableOpen}>
+        <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('settings.disable2FA')}</DialogTitle>
+            <DialogDescription className="text-gray-500 text-sm">Enter your current TOTP code to disable 2FA</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <Input value={disableCode} onChange={(e) => setDisableCode(e.target.value)}
+              placeholder="000000" maxLength={6}
+              className="bg-black/50 border-white/10 text-gray-200 font-mono text-center text-lg tracking-[0.5em]"
+              data-testid="totp-disable-input" />
+            <div className="flex gap-3">
+              <Button variant="ghost" onClick={() => setDisableOpen(false)} className="flex-1 text-gray-400">{t('common.cancel')}</Button>
+              <Button onClick={handleTotpDisable}
+                className="flex-1 bg-red-600 hover:bg-red-500 text-white font-semibold" data-testid="totp-disable-confirm">
+                {t('settings.disable2FA')}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
