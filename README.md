@@ -2,198 +2,295 @@
 
 A production-ready VPN management panel built with **FastAPI**, **React**, **PostgreSQL**, and **Redis**. Manage Outline VPN servers, users, access keys, licenses, and traffic — all from a sleek cyberpunk-inspired dashboard.
 
----
-
-## Features
-
-### Backend
-- **Outline Node Manager** — Add, edit, remove nodes; health monitoring; user/key sync; multi-node switching
-- **VPN User Management** — Create users with traffic/device limits, auto-generate Outline access keys, QR codes, ssconf:// subscriptions
-- **License Validation** — Generate keys, server fingerprint binding, external license server integration, 6-hour heartbeat
-- **Authentication** — JWT access + refresh tokens, bcrypt hashing, role system (admin / reseller), optional TOTP 2FA
-- **Scheduler** — Node health checks (5 min), traffic logging (1 hr), license heartbeat (6 hr)
-- **CLI** — License management, admin reset, server fingerprint
-
-### Frontend
-- **Dashboard** — Nodes, users, traffic stats, recent activity at a glance
-- **Nodes** — Add/edit/remove servers, health check, status indicators
-- **Users** — CRUD, traffic/device limits, QR codes, node switching, bulk migration
-- **Traffic** — Daily charts, per-user and per-node breakdowns (Recharts)
-- **Licenses** — Generate, validate, revoke, activate with fingerprint
-- **Settings** — Language (EN/RU/TK), dark/light mode, 2FA setup, backup/export
-- **Audit Logs** — Full action history with timestamps and IPs
-- **i18n** — English, Russian, Turkmen
-
-### Design
-- Dark-first cyberpunk theme with glassmorphism cards
-- Outfit / Inter / JetBrains Mono typography
-- Responsive layout with mobile sidebar
-- Micro-animations via Framer Motion
+> **This software requires a valid license key to operate.** Without activation, the panel will not function. Contact the Lightline team to purchase a license.
 
 ---
 
-## Quick Start
+## What You Need Before Starting
 
-### One-Line Install (Linux)
+Before installing, make sure you have:
+
+- A **Linux VPS** (Ubuntu 20.04+ or Debian 11+ recommended) with at least 1GB RAM
+- **Root access** (you need to run commands as `sudo`)
+- A **license key** (provided by the Lightline team after purchase)
+- (Optional) A **domain name** pointed to your server IP
+
+If you don't have any of these yet, get them first before continuing.
+
+---
+
+## Installation (Step by Step)
+
+### Option A: One-Line Install (Easiest)
+
+This is the fastest way. Just paste this single command into your server terminal:
 
 ```bash
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/Lightline-Panel/lightline-panel/main/installer/install.sh)"
 ```
 
-### Docker Compose (Manual)
+**What this does:**
+1. Installs Docker and Docker Compose (if not already installed)
+2. Downloads the Lightline Panel
+3. Creates secure passwords automatically
+4. Starts all services (database, backend, frontend)
+
+**When it finishes, you'll see:**
+```
+  Panel URL:    http://YOUR_SERVER_IP
+  Backend API:  http://127.0.0.1:8000/api
+```
+
+### Option B: Manual Install with Docker Compose
+
+If you prefer to do it yourself:
 
 ```bash
+# Step 1: Download the panel
 git clone https://github.com/Lightline-Panel/lightline-panel.git
 cd lightline-panel
 
-# Generate secrets
+# Step 2: Create your config file
 cp backend/env.example .env
-# Edit .env with your values
 
+# Step 3: Edit the config (change the passwords!)
+nano .env
+
+# Step 4: Start everything
 docker compose up -d --build
 ```
 
-Panel: `http://YOUR_SERVER_IP:80` | Default login: `admin` / `admin123`
+**Wait about 30 seconds** for everything to start, then open `http://YOUR_SERVER_IP` in your browser.
 
-### Development
+---
 
-**Backend:**
+## First Login
+
+1. Open your browser and go to `http://YOUR_SERVER_IP`
+2. You'll see the login page
+3. Default credentials: **username:** `admin` / **password:** `admin123`
+4. **Change your password immediately** after first login in Settings
+
+---
+
+## Activating Your License
+
+The panel **will not work** without a valid license. Here's how to activate it:
+
+### If you have a license key:
+
+1. Log in to the panel
+2. Go to the **Licenses** page (in the sidebar)
+3. Click **Activate**
+4. Paste your license key (looks like: `LL-A1B2C3D4-E5F6G7H8-I9J0K1L2-M3N4O5P6`)
+5. Click **Activate** — done!
+
+### Via terminal (alternative):
+
 ```bash
-cd backend
-python -m venv venv && source venv/bin/activate  # or venv\Scripts\activate on Windows
-pip install -r requirements.txt
-cp env.example .env  # edit with your PostgreSQL URL + JWT_SECRET
-uvicorn server:app --reload --port 8000
+# If using Docker:
+cd /opt/lightline
+docker compose exec backend python cli.py license activate LL-XXXX-XXXX-XXXX-XXXX
+
+# Check your license status:
+docker compose exec backend python cli.py license show
 ```
 
-**Frontend:**
+### What happens after activation:
+
+- Your server's **unique fingerprint** is bound to the license
+- The panel sends a **heartbeat** every 6 hours to verify the license is still valid
+- If the license expires or is revoked, the panel will stop working
+
+---
+
+## Adding Your First VPN Server (Node)
+
+After activating your license:
+
+1. Go to **Nodes** in the sidebar
+2. Click **Add Node**
+3. Fill in:
+   - **Name**: Any name (e.g., "Frankfurt Server")
+   - **IP**: Your Outline server IP address
+   - **API Port**: The Outline management API port
+   - **API Key**: The Outline management API key
+   - **Country**: (optional) Country code like `DE`, `US`, `NL`
+4. Click **Save**
+5. The panel will check if the server is reachable (green = online)
+
+### Where to find your Outline API details:
+
+When you install Outline VPN server, it gives you a management URL like:
+```
+https://1.2.3.4:12345/AbCdEfGh123456
+```
+- **IP**: `1.2.3.4`
+- **API Port**: `12345`
+- **API Key**: `AbCdEfGh123456`
+
+---
+
+## Creating VPN Users
+
+1. Go to **Users** in the sidebar
+2. Click **Add User**
+3. Fill in:
+   - **Username**: Any name for this user
+   - **Traffic Limit**: Max data in bytes (0 = unlimited)
+   - **Device Limit**: How many devices can connect (default: 1)
+   - **Expire Date**: When this user's access expires
+   - **Node**: Which server to assign them to
+4. Click **Save**
+5. The panel creates an Outline access key automatically
+6. Share the **QR code** or **access URL** with your user
+
+---
+
+## Common Commands
+
+All commands run from the install directory (`/opt/lightline` by default):
+
 ```bash
-cd frontend
-npm install
-echo "REACT_APP_BACKEND_URL=http://localhost:8000" > .env
-npm start
+# View logs (see what's happening)
+docker compose logs -f
+
+# Restart everything
+docker compose restart
+
+# Stop the panel
+docker compose down
+
+# Rebuild after updates
+docker compose up -d --build
+
+# Update to latest version
+cd /opt/lightline
+git pull origin main
+docker compose up -d --build
 ```
 
 ---
 
 ## CLI Commands
 
-Run from the `backend/` directory or via Docker:
+The CLI lets you manage things from the terminal:
 
 ```bash
 # License management
-python cli.py license generate --days 365 --servers 5
-python cli.py license activate LL-XXXX-XXXX-XXXX-XXXX
-python cli.py license show
-
-# Admin management
-python cli.py admin reset --user admin --pass newpassword
-
-# Server fingerprint
-python cli.py fingerprint
-```
-
-Via Docker Compose:
-```bash
+docker compose exec backend python cli.py license generate --days 365 --servers 5
+docker compose exec backend python cli.py license activate LL-XXXX-XXXX-XXXX-XXXX
 docker compose exec backend python cli.py license show
+
+# Reset admin password (if you forgot it)
+docker compose exec backend python cli.py admin reset --user admin --pass newpassword
+
+# Show server fingerprint
+docker compose exec backend python cli.py fingerprint
 ```
 
 ---
 
-## License Server Integration
+## License Server Integration (Advanced)
 
-Lightline Panel supports an external **Lightline License Server** for centralized license management across multiple panel instances.
+If you manage **multiple panels** and want centralized license control, you can deploy the separate [Lightline License Server](https://github.com/Lightline-Panel/lightline-license-server).
 
-### Setup
+### Step 1: Deploy the license server on a separate VPS
 
-1. **Deploy the license server** (separate repo: [lightline-license-server](https://github.com/Lightline-Panel/lightline-license-server))
+```bash
+git clone https://github.com/Lightline-Panel/lightline-license-server.git
+cd lightline-license-server/docker
+cp .env.example .env
+nano .env    # Change SECRET_KEY, ENCRYPTION_KEY, and ADMIN_PASSWORD!
+docker compose up -d --build
+```
 
-   ```bash
-   git clone https://github.com/Lightline-Panel/lightline-license-server.git
-   cd lightline-license-server/docker
-   cp .env.example .env  # edit with strong secrets
-   docker compose up -d --build
-   ```
+This gives you:
+- **License API** at `http://YOUR_LICENSE_SERVER:8000`
+- **Admin Dashboard** at `http://YOUR_LICENSE_SERVER` (login: `admin` / whatever you set)
 
-   The license server runs on port `8000` with an admin dashboard on port `80`.
+### Step 2: Create license keys
 
-2. **Create a license key** on the license server:
+Open the license server dashboard, go to **Licenses**, click **Create License**, and set:
+- **Expire Days**: How long the license lasts (e.g., 365)
+- **Max Servers**: How many panels can use this key (e.g., 1)
 
-   ```bash
-   # Via CLI script
-   python scripts/generate_license.py \
-     --url http://YOUR_LICENSE_SERVER:8000 \
-     --username admin --password admin \
-     --expire-days 365 --max-servers 5
+Copy the generated key.
 
-   # Or via the admin dashboard at http://YOUR_LICENSE_SERVER
-   ```
+### Step 3: Connect your panel to the license server
 
-3. **Configure the panel** to use the license server:
+On each panel VPS, edit the `.env` file:
 
-   Add to your panel's `.env` file:
-   ```env
-   LICENSE_SERVER_URL=http://YOUR_LICENSE_SERVER:8000
-   LICENSE_SERVER_TIMEOUT=10
-   ```
+```bash
+nano /opt/lightline/.env
+```
 
-   Or in `docker-compose.yml`:
-   ```yaml
-   environment:
-     LICENSE_SERVER_URL: http://YOUR_LICENSE_SERVER:8000
-   ```
+Add this line (replace with your license server IP):
 
-4. **Activate the license** in the panel:
+```env
+LICENSE_SERVER_URL=http://YOUR_LICENSE_SERVER_IP:8000
+```
 
-   - Go to the panel dashboard → **Licenses** page
-   - Enter the license key generated in step 2
-   - Click **Activate** — the panel sends its server fingerprint to the license server
+Then restart:
 
-   Or via API:
-   ```bash
-   curl -X POST http://YOUR_PANEL:8000/api/licenses/activate \
-     -H 'Content-Type: application/json' \
-     -d '{"license_key": "ABCD1234-EFGH5678-IJKL9012-MNOP3456-QRST7890"}'
-   ```
+```bash
+cd /opt/lightline
+docker compose restart
+```
 
-### How It Works
+### Step 4: Activate
 
-| Action | Flow |
+Go to the panel dashboard → **Licenses** → paste the key → **Activate**.
+
+### How it works
+
+| What happens | When |
 |---|---|
-| **Activate** | Panel → `POST /api/v1/license/activate` → License Server binds key to server fingerprint |
-| **Validate** | Panel → `POST /api/v1/license/validate` → License Server checks key + fingerprint |
-| **Heartbeat** | Panel sends heartbeat every 6 hours → License Server confirms license is still valid |
-| **Revoke** | Admin revokes on License Server → next panel heartbeat suspends the panel |
+| **Activate** | Panel sends its server fingerprint to the license server. The key is now bound to this specific server. |
+| **Heartbeat** | Every 6 hours, the panel checks with the license server that the license is still valid. |
+| **Revoke** | You revoke a key on the license server → the panel stops working at the next heartbeat. |
+| **Blacklist** | You can block specific servers by fingerprint on the license server dashboard. |
 
-- The panel generates a **server fingerprint** from hostname + machine ID + MAC address
-- If the license server is unreachable (timeout), the panel **does not** suspend — only definitive failures cause suspension
-- When `LICENSE_SERVER_URL` is empty, the panel falls back to **local-only** license management
+---
 
-### License Server Admin Dashboard
+## Troubleshooting
 
-The license server includes a React admin dashboard with:
-- **License list** — create, view, revoke keys
-- **Activation log** — see which servers activated which keys
-- **Blacklist** — block specific server fingerprints
-- **Audit log** — full history of all actions
+### Panel won't start
+```bash
+docker compose logs backend    # Check for errors
+docker compose down
+docker compose up -d --build   # Rebuild
+```
 
-Access at `http://YOUR_LICENSE_SERVER` (default login: `admin` / `admin`).
+### Can't connect to panel
+- Make sure port 80 is open: `sudo ufw allow 80`
+- Check if services are running: `docker compose ps`
+
+### License activation failed
+- Double-check the key (no extra spaces)
+- Make sure `LICENSE_SERVER_URL` is correct and reachable
+- Check license server logs: `docker compose logs backend`
+
+### Forgot admin password
+```bash
+docker compose exec backend python cli.py admin reset --user admin --pass newpassword
+```
 
 ---
 
 ## Environment Variables
 
-| Variable | Default | Description |
+| Variable | Default | What it does |
 |---|---|---|
-| `POSTGRES_URL` | — | PostgreSQL async connection string |
-| `JWT_SECRET` | — | Secret key for JWT token signing |
-| `OUTLINE_MODE` | `mock` | `mock` for dev, `live` for production |
-| `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
-| `LICENSE_SERVER_URL` | — | External license server URL (e.g. `http://license.example.com:8000`) |
-| `LICENSE_SERVER_TIMEOUT` | `10` | License server request timeout in seconds |
-| `REDIS_URL` | — | Redis connection string |
-| `PANEL_PORT` | `80` | Frontend port (Docker) |
-| `POSTGRES_PASSWORD` | `changeme` | PostgreSQL password (Docker) |
+| `POSTGRES_URL` | — | Database connection string (auto-set by Docker) |
+| `POSTGRES_PASSWORD` | `changeme` | Database password — **change this!** |
+| `JWT_SECRET` | — | Secret for login tokens — **change this!** |
+| `OUTLINE_MODE` | `mock` | `mock` = demo data, `live` = real Outline servers |
+| `CORS_ORIGINS` | `*` | Which websites can access the API |
+| `LICENSE_SERVER_URL` | — | External license server URL (optional) |
+| `LICENSE_SERVER_TIMEOUT` | `10` | License server timeout in seconds |
+| `REDIS_URL` | — | Redis cache connection (auto-set by Docker) |
+| `PANEL_PORT` | `80` | Which port the panel runs on |
 
 ---
 
@@ -202,20 +299,21 @@ Access at `http://YOUR_LICENSE_SERVER` (default login: `admin` / `admin`).
 ```
 lightline-panel/
   backend/
-    server.py          # FastAPI app, routes, schedulers
-    models.py          # SQLAlchemy ORM models
-    database.py        # Async DB engine + session
-    auth.py            # JWT + bcrypt helpers
-    outline_client.py  # Outline VPN API client (+ mock)
-    cli.py             # CLI for license/admin management
+    server.py          # Main API server
+    models.py          # Database tables
+    database.py        # Database connection
+    auth.py            # Login & security
+    license_client.py  # License server communication
+    outline_client.py  # Outline VPN API client
+    cli.py             # Terminal commands
     Dockerfile
   frontend/
     src/
       pages/           # Dashboard, Nodes, Users, Traffic, License, Settings, Login
-      components/      # Layout, Sidebar, shadcn/ui components
-      contexts/        # AuthContext, I18nContext
-      i18n/            # en.json, ru.json, tk.json
-      lib/api.js       # Axios instance
+      components/      # UI components
+      contexts/        # Auth & language state
+      i18n/            # Translations (English, Russian, Turkmen)
+      lib/api.js       # API client
     Dockerfile
     nginx.conf
   installer/
@@ -223,12 +321,11 @@ lightline-panel/
     update.sh          # Updater
     uninstall.sh       # Uninstaller
   docker-compose.yml
-  design_guidelines.json
 ```
 
 ---
 
-## API Endpoints
+## API Reference
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -265,4 +362,8 @@ lightline-panel/
 
 ## License
 
-MIT
+**Proprietary Software** — All rights reserved.
+
+This software is licensed, not sold. You may only use it with a valid license key purchased from the Lightline team. Redistribution, modification for resale, or unauthorized use is prohibited.
+
+For licensing inquiries, contact the Lightline team.
