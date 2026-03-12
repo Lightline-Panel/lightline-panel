@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Download, Globe, Info, Shield, Loader2, ShieldCheck, ShieldOff, Server, RefreshCw } from 'lucide-react';
+import { Download, Globe, Info, Shield, Loader2, ShieldCheck, ShieldOff, Server } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
@@ -136,20 +136,13 @@ export default function SettingsPage() {
                   try {
                     const { data } = await api.put('/settings', { settings: { ss_port: ssPort } });
                     toast.success(data.message || 'SS port updated');
-                  } catch { toast.error('Failed to save'); }
+                  } catch (err) {
+                    const detail = err.response?.data?.detail || 'Failed to save';
+                    toast.error(detail);
+                  }
                   setSavingPort(false);
                 }} disabled={savingPort} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold shrink-0">
                   {savingPort ? <Loader2 className="w-4 h-4 animate-spin" /> : t('common.save')}
-                </Button>
-                <Button onClick={async () => {
-                  setSavingPort(true);
-                  try {
-                    const { data } = await api.post('/nodes/regenerate-urls');
-                    toast.success(data.message || 'URLs regenerated');
-                  } catch { toast.error('Failed to regenerate URLs'); }
-                  setSavingPort(false);
-                }} disabled={savingPort} variant="outline" className="border-white/10 text-gray-300 shrink-0">
-                  <RefreshCw className="w-4 h-4" /> {t('settings.regenUrls')}
                 </Button>
               </div>
             </CardContent>

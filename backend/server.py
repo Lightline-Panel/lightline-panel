@@ -446,24 +446,34 @@ def _get_node_http_client() -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=8, verify=False)
 
 
+# Cache which scheme (http/https) works for each node IP to avoid slow fallbacks
+_node_scheme_cache: dict = {}
+
 async def _node_request(node, method: str, path: str, **kwargs) -> httpx.Response:
-    """Make an HTTPS request to a node's REST API.
+    """Make a request to a node's REST API.
     
-    Tries HTTPS first (new Marzban-style nodes), then HTTP (legacy nodes).
+    Tries the last-known working scheme first, then the other.
     Uses panel's client certificate for mTLS authentication.
     """
     api_port = node.api_port or 62050
-    # Also try legacy token auth for backward compatibility
     token = node.api_key or ''
     headers = kwargs.pop('headers', {})
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    for scheme in ['https', 'http']:
+    # Use cached scheme first, then try both (http first since most nodes don't use SSL)
+    cached = _node_scheme_cache.get(node.ip)
+    schemes = [cached, 'http', 'https'] if cached else ['http', 'https']
+    seen = set()
+    for scheme in schemes:
+        if scheme in seen:
+            continue
+        seen.add(scheme)
         url = f"{scheme}://{node.ip}:{api_port}{path}"
         try:
             async with _get_node_http_client() as client:
                 resp = await client.request(method, url, headers=headers, **kwargs)
+                _node_scheme_cache[node.ip] = scheme  # remember working scheme
                 return resp
         except Exception as e:
             logger.debug(f"Node {node.name} {scheme} request to {path} failed: {e}")
@@ -1097,25 +1107,31 @@ async def get_settings(admin=Depends(get_current_admin), db: AsyncSession = Depe
 async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     ss_port_changed = False
     new_ss_port = None
-    old_ss_port = None
 
-    # First pass: detect port change but DON'T write it yet
+    # Save ALL settings to DB first (always succeeds)
     for key, value in req.settings.items():
-        if key == 'ss_port':
-            existing = (await db.execute(select(PanelSettings).where(PanelSettings.key == key))).scalar_one_or_none()
-            old_ss_port_str = existing.value if existing else None
-            if old_ss_port_str != str(value):
+        existing = (await db.execute(select(PanelSettings).where(PanelSettings.key == key))).scalar_one_or_none()
+        if existing:
+            if key == 'ss_port' and existing.value != str(value):
                 ss_port_changed = True
                 new_ss_port = int(value)
-                old_ss_port = int(old_ss_port_str) if old_ss_port_str else 8388
+            existing.value = str(value)
+        else:
+            db.add(PanelSettings(key=key, value=str(value)))
+            if key == 'ss_port':
+                ss_port_changed = True
+                new_ss_port = int(value)
 
-    # If port is changing, tell nodes FIRST — only update DB if at least one node succeeds
+    # If port changed, push the change to all nodes AND update their DB records
     node_ok = 0
     node_errors = 0
     error_details = []
     if ss_port_changed and new_ss_port:
         nodes = (await db.execute(select(Node))).scalars().all()
         for node in nodes:
+            # Always update the node's ss_port in DB so URLs are consistent
+            node.ss_port = new_ss_port
+            # Also try to tell the actual node to change its running ss-server port
             try:
                 connect_resp = await _node_request(node, 'POST', '/connect')
                 if connect_resp and connect_resp.status_code == 200:
@@ -1124,58 +1140,38 @@ async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(g
                         resp = await _node_request(node, 'POST', '/config/port',
                                                    json={"session_id": sid, "port": new_ss_port})
                         if resp and resp.status_code == 200:
-                            node.ss_port = new_ss_port
                             node_ok += 1
                             logger.info(f"Node {node.name}: SS port changed to {new_ss_port}")
                         else:
                             code = resp.status_code if resp else 'no response'
                             body = resp.text[:200] if resp else ''
-                            error_details.append(f"{node.name}: failed ({code}) {body}")
+                            error_details.append(f"{node.name}: ({code}) {body}")
                             node_errors += 1
                     else:
-                        error_details.append(f"{node.name}: no session_id from /connect")
+                        error_details.append(f"{node.name}: no session from /connect")
                         node_errors += 1
                 else:
                     code = connect_resp.status_code if connect_resp else 'unreachable'
-                    error_details.append(f"{node.name}: cannot connect ({code})")
+                    error_details.append(f"{node.name}: ({code})")
                     node_errors += 1
             except Exception as e:
-                error_details.append(f"{node.name}: {str(e)[:100]}")
-                logger.error(f"Node {node.name}: port change error: {e}")
+                error_details.append(f"{node.name}: {str(e)[:80]}")
                 node_errors += 1
-
-        if node_ok == 0 and node_errors > 0:
-            logger.error(f"Port change failed on all {node_errors} nodes: {error_details}")
-            raise HTTPException(502,
-                f"Port change failed — no nodes could be reached. "
-                f"Make sure your node is running and updated. Errors: {'; '.join(error_details)}")
-
-    # Now save all settings to DB (port only saved if nodes confirmed)
-    for key, value in req.settings.items():
-        existing = (await db.execute(select(PanelSettings).where(PanelSettings.key == key))).scalar_one_or_none()
-        if existing:
-            if key == 'ss_port' and ss_port_changed:
-                if node_ok > 0:
-                    existing.value = str(value)
-                # else: keep old value — nodes didn't change
-            else:
-                existing.value = str(value)
-        else:
-            if key == 'ss_port' and ss_port_changed and node_ok == 0:
-                continue  # Don't save port if no nodes changed
-            db.add(PanelSettings(key=key, value=str(value)))
-
-    if ss_port_changed and node_ok > 0:
-        logger.info(f"SS port changed to {new_ss_port}: {node_ok} nodes OK, {node_errors} errors")
+        logger.info(f"SS port → {new_ss_port}: {node_ok} OK, {node_errors} errors")
 
     db.add(AuditLog(admin_id=int(admin["sub"]), action='settings_updated',
-                    details=f'Panel settings updated' + (f' — SS port changed to {new_ss_port}, {node_ok} nodes updated' if ss_port_changed else ''),
+                    details=f'Settings updated' + (f' — SS port → {new_ss_port} ({node_ok} nodes live)' if ss_port_changed else ''),
                     ip_address=request.client.host if request.client else None))
-    msg = "Settings updated"
+    msg = "Settings saved"
     if ss_port_changed:
-        msg += f", port changed on {node_ok} node(s)"
-        if node_errors:
-            msg += f" ({node_errors} failed: {'; '.join(error_details)})"
+        if node_ok > 0 and node_errors == 0:
+            msg = f"Port changed to {new_ss_port} on all nodes"
+        elif node_ok > 0:
+            msg = f"Port changed to {new_ss_port} on {node_ok} node(s), {node_errors} failed"
+        else:
+            msg = (f"Port saved as {new_ss_port}. "
+                   f"Warning: could not reach nodes to apply live — "
+                   f"restart your node(s) to apply. {'; '.join(error_details)}")
     return {"message": msg}
 
 

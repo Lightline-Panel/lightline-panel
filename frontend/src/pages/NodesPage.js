@@ -91,15 +91,6 @@ export default function NodesPage() {
     setRefreshing(false);
   };
 
-  const regenerateUrls = async () => {
-    try {
-      const { data } = await api.post('/nodes/regenerate-urls');
-      toast.success(data.message);
-    } catch {
-      toast.error('URL regeneration failed');
-    }
-  };
-
   const showCertificate = async () => {
     try {
       const { data } = await api.get('/nodes/certificate');
@@ -126,10 +117,6 @@ export default function NodesPage() {
           <Button onClick={refreshAll} disabled={refreshing} variant="outline"
             className="border-white/10 text-gray-300 gap-2 shrink-0 h-9 text-xs" data-testid="refresh-all-button">
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> {t('nodes.refresh')}
-          </Button>
-          <Button onClick={regenerateUrls} variant="outline"
-            className="border-white/10 text-gray-300 gap-2 shrink-0 h-9 text-xs">
-            <RefreshCw className="w-3.5 h-3.5" /> {t('nodes.regenUrls')}
           </Button>
           <Button onClick={showCertificate} variant="outline"
             className="border-white/10 text-gray-300 gap-2 shrink-0 h-9 text-xs">
