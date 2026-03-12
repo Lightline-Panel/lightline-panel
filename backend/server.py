@@ -2,7 +2,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import PlainTextResponse, JSONResponse
-from sqlalchemy import select, func, desc, update, delete
+from sqlalchemy import select, func, desc, update, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from typing import Optional
@@ -1432,6 +1432,10 @@ async def user_validation_task():
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Add columns that create_all won't add to existing tables
+        await conn.execute(text(
+            "ALTER TABLE vpn_users ADD COLUMN IF NOT EXISTS last_connected_at TIMESTAMPTZ"
+        ))
     logger.info("Database tables created")
     async with async_session() as session:
         admin_count = (await session.execute(select(func.count(Admin.id)))).scalar()
