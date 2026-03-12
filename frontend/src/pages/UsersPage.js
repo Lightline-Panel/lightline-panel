@@ -371,7 +371,11 @@ export default function UsersPage() {
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('users.expireDate')}</Label>
-              <Input type="date" value={form.expire_date} onChange={(e) => setForm({ ...form, expire_date: e.target.value })} className="bg-black/50 border-white/10 text-gray-200" data-testid="user-expire-input" />
+              <div className="flex gap-2">
+                <Input type="date" value={form.expire_date} min={new Date().toISOString().split('T')[0]} onChange={(e) => setForm({ ...form, expire_date: e.target.value })} className="bg-black/50 border-white/10 text-gray-200 flex-1" data-testid="user-expire-input" placeholder="No expiry" />
+                {form.expire_date && <Button variant="ghost" size="sm" onClick={() => setForm({ ...form, expire_date: '' })} className="text-gray-500 hover:text-red-400 px-2 shrink-0">&times;</Button>}
+              </div>
+              <p className="text-[10px] text-gray-600">Leave empty for no expiry</p>
             </div>
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('users.assignedNode')}</Label>
@@ -386,7 +390,7 @@ export default function UsersPage() {
             </div>
             <div className="flex gap-3 pt-2">
               <Button variant="ghost" onClick={() => setDialogOpen(false)} className="flex-1 text-gray-400">{t('common.cancel')}</Button>
-              <Button onClick={handleSave} disabled={saving} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold" data-testid="user-save-button">
+              <Button onClick={handleSave} disabled={saving || (!editing && !form.assigned_node_id)} className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-black font-semibold" data-testid="user-save-button">
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : t('common.save')}
               </Button>
             </div>
