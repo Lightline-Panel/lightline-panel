@@ -556,33 +556,28 @@ async def _check_node_health(node) -> str:
     """Check node health via REST API (mTLS), fallback to TCP on SS port."""
     api_port = node.api_port or 62050
 
-    # Method 1: REST API health check
+    # Method 1: REST API health check — if node agent responds, it's online
     resp = await _node_request(node, 'GET', '/health')
     if resp:
         logger.info(f"Node {node.name}: /health returned {resp.status_code}")
         if resp.status_code == 200:
             try:
                 data = resp.json()
-                if data.get('healthy') or data.get('ss_running'):
-                    return 'online'
-                # Node agent running but SS not — still mark as connected
-                return 'offline'
-            except Exception:
-                # Got 200 but not JSON — node is alive
+                ss_running = data.get('healthy') or data.get('ss_running')
+                if not ss_running:
+                    logger.warning(f"Node {node.name}: agent reachable but ss-server NOT running")
+                # Node agent responded 200 = node is online regardless of SS state
                 return 'online'
-        if resp.status_code == 503:
-            logger.warning(f"Node {node.name}: agent reachable but ss-server not running")
-            return 'offline'
+            except Exception:
+                return 'online'
+        # Any response from node agent means it's reachable
+        if resp.status_code in (503, 500):
+            logger.warning(f"Node {node.name}: agent returned {resp.status_code}")
+            return 'online'
     else:
         logger.warning(f"Node {node.name}: no response from {node.ip}:{api_port}")
 
-    # Method 2: Try /status endpoint (no auth needed)
-    resp2 = await _node_request(node, 'GET', '/status')
-    if resp2 and resp2.status_code == 200:
-        logger.info(f"Node {node.name}: /status reachable")
-        return 'online'
-
-    # Method 3: Fallback — TCP connect to SS port
+    # Method 2: Fallback — TCP connect to SS port
     try:
         ss_port = node.ss_port or int(os.environ.get('SS_PORT', '8388'))
         reader, writer = await asyncio.wait_for(
