@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useI18n } from '@/contexts/I18nContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,14 +40,20 @@ export default function UsersPage() {
   const [bulkSwitching, setBulkSwitching] = useState(false);
   const { t } = useI18n();
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async (silent = false) => {
     try {
       const [u, n] = await Promise.all([api.get('/users'), api.get('/nodes')]);
       setUsers(u.data); setNodes(n.data);
     } catch {}
-    setLoading(false);
-  };
-  useEffect(() => { fetchData(); }, []);
+    if (!silent) setLoading(false);
+  }, []);
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Auto-refresh every 15s for near-realtime traffic/devices
+  useEffect(() => {
+    const interval = setInterval(() => fetchData(true), 15000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
 
   const openAdd = () => { setEditing(null); setForm({ username: '', traffic_limit: '0', expire_date: '', assigned_node_id: '' }); setDialogOpen(true); };
   const openEdit = (u) => { setEditing(u); setForm({ username: u.username, traffic_limit: String(u.traffic_limit ? u.traffic_limit / 1_000_000_000 : 0), expire_date: u.expire_date ? u.expire_date.split('T')[0] : '', assigned_node_id: u.assigned_node_id ? String(u.assigned_node_id) : '' }); setDialogOpen(true); };
@@ -137,14 +143,15 @@ export default function UsersPage() {
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.trafficUsed')}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.devices')}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.expireDate')}</TableHead>
+                  <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.lastConnected') || 'Last Connected'}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider text-right">{t('common.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-5 h-5 animate-spin mx-auto text-gray-500" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center py-12"><Loader2 className="w-5 h-5 animate-spin mx-auto text-gray-500" /></TableCell></TableRow>
                 ) : filtered.length === 0 ? (
-                  <TableRow><TableCell colSpan={7} className="text-center py-12 text-gray-500">{t('common.noData')}</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={8} className="text-center py-12 text-gray-500">{t('common.noData')}</TableCell></TableRow>
                 ) : filtered.map((u) => (
                   <TableRow key={u.id} className="border-white/5 hover:bg-white/[0.02]">
                     <TableCell className="text-gray-200 font-medium">{u.username}</TableCell>
@@ -170,6 +177,17 @@ export default function UsersPage() {
                     </TableCell>
                     <TableCell className="font-mono text-xs text-gray-500">
                       {u.expire_date ? new Date(u.expire_date).toLocaleDateString('en-GB') : '—'}
+                    </TableCell>
+                    <TableCell className="text-xs text-gray-500">
+                      {u.last_connected_at ? (() => {
+                        const d = new Date(u.last_connected_at);
+                        const now = new Date();
+                        const diff = Math.floor((now - d) / 1000);
+                        if (diff < 60) return <span className="text-green-400">Just now</span>;
+                        if (diff < 3600) return <span className="text-green-400">{Math.floor(diff / 60)}m ago</span>;
+                        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+                        return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                      })() : '—'}
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
@@ -317,6 +335,19 @@ export default function UsersPage() {
                   <div>
                     <p className="text-gray-500 uppercase text-[10px]">{t('users.expires')}</p>
                     <p className="text-gray-400 font-mono">{u.expire_date ? new Date(u.expire_date).toLocaleDateString('en-GB') : '—'}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-gray-500 uppercase text-[10px]">{t('users.lastConnected') || 'Last Connected'}</p>
+                    <p className="text-gray-400">
+                      {u.last_connected_at ? (() => {
+                        const d = new Date(u.last_connected_at);
+                        const diff = Math.floor((new Date() - d) / 1000);
+                        if (diff < 60) return <span className="text-green-400">Just now</span>;
+                        if (diff < 3600) return <span className="text-green-400">{Math.floor(diff / 60)}m ago</span>;
+                        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+                        return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                      })() : '—'}
+                    </p>
                   </div>
                 </div>
               </CardContent>

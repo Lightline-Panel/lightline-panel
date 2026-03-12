@@ -109,7 +109,8 @@
     "expires": "Gutarýar",
     "switchAll": "Hemmesini çalyşmak",
     "copySubUrl": "Ýazylma URL göçürmek",
-    "node": "Serwer"
+    "node": "Serwer",
+    "lastConnected": "Soňky birikme"
   },
   "traffic": {
     "title": "Trafik statistikasy",

@@ -818,6 +818,7 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
             "status": u.status, "created_at": u.created_at.isoformat(), "traffic_used": traffic,
             "online_devices": node_stats.get("connected_devices", 0),
             "connected_ips": node_stats.get("connected_ips", []),
+            "last_connected_at": u.last_connected_at.isoformat() if u.last_connected_at else None,
         })
     return result
 
@@ -1240,11 +1241,12 @@ async def create_backup(request: Request, admin=Depends(get_current_admin), db: 
 # ===== Background Tasks =====
 
 async def collect_node_stats():
-    """Poll /stats from each online node every 60s.
+    """Poll /stats from each online node every 15s.
     
     - Stores connected devices/IPs in _node_stats_cache for API responses.
     - Computes traffic deltas and writes to TrafficLog (distributed across
       active users on each node, since single-password mode can't distinguish users).
+    - Updates last_connected_at for users on nodes with active connections.
     """
     while True:
         try:
@@ -1303,13 +1305,25 @@ async def collect_node_stats():
                                     bytes_transferred=delta,
                                 ))
                         
+                        # Update last_connected_at for active users on this node if there are connections
+                        if data.get('connected_devices', 0) > 0:
+                            connected_users = (await session.execute(
+                                select(VPNUser).where(
+                                    VPNUser.assigned_node_id == node.id,
+                                    VPNUser.status == 'active'
+                                )
+                            )).scalars().all()
+                            now = datetime.now(timezone.utc)
+                            for cu in connected_users:
+                                cu.last_connected_at = now
+
                         logger.debug(f"Node {node.name} stats: up={upload}, down={download}, devices={data.get('connected_devices', 0)}, delta={delta}")
                     except Exception as e:
                         logger.debug(f"Failed to collect stats from {node.name}: {e}")
                 await session.commit()
         except Exception as e:
             logger.error(f"Stats collection error: {e}")
-        await asyncio.sleep(60)
+        await asyncio.sleep(15)
 
 
 async def check_all_nodes_health():

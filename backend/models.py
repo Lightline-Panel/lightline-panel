@@ -47,6 +47,7 @@ class VPNUser(Base):
     ss_url = Column(Text, nullable=True)  # legacy, same as access_url now
     access_token = Column(String(64), unique=True, nullable=True)
     status = Column(String(20), default='active')
+    last_connected_at = Column(TZDateTime, nullable=True)
     created_at = Column(TZDateTime, default=lambda: datetime.now(timezone.utc))
     node = relationship('Node', backref='vpn_users')
 

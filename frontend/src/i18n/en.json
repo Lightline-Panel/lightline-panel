@@ -109,7 +109,8 @@
     "expires": "Expires",
     "switchAll": "Switch All",
     "copySubUrl": "Copy Sub URL",
-    "node": "Node"
+    "node": "Node",
+    "lastConnected": "Last Connected"
   },
   "traffic": {
     "title": "Traffic Statistics",
