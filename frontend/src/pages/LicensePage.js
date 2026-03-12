@@ -109,7 +109,13 @@ export default function LicensePage() {
                       </div>
                     </TableCell>
                     <TableCell><Badge variant={statusColor(lic.status)} className="text-[10px] h-5">{lic.status}</Badge></TableCell>
-                    <TableCell className="text-gray-400">{lic.expire_days} {t('licenses.days')}</TableCell>
+                    <TableCell className="text-gray-400">
+                      {lic.expire_days > 0 ? (
+                        <>
+                          {lic.days_left !== undefined ? `${lic.days_left}/${lic.expire_days} days` : `${lic.expire_days} days`}
+                        </>
+                      ) : t('dashboard.unlimited')}
+                    </TableCell>
                     <TableCell className="text-gray-400">{lic.max_servers}</TableCell>
                     <TableCell className="text-gray-400">{lic.activated_servers}</TableCell>
                     <TableCell className="text-right">
@@ -155,7 +161,11 @@ export default function LicensePage() {
                 <div className="grid grid-cols-3 gap-2 text-xs">
                   <div>
                     <p className="text-gray-500 uppercase text-[10px]">{t('users.expires')}</p>
-                    <p className="text-gray-400">{lic.expire_days}d</p>
+                    <p className="text-gray-400">
+                      {lic.expire_days > 0 ? (
+                        lic.days_left !== undefined ? `${lic.days_left}/${lic.expire_days}d` : `${lic.expire_days}d`
+                      ) : t('dashboard.unlimited')}
+                    </p>
                   </div>
                   <div>
                     <p className="text-gray-500 uppercase text-[10px]">{t('licenses.max')}</p>

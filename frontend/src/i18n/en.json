@@ -57,7 +57,9 @@
     "uniqueIps": "unique IPs",
     "noConnections": "No connections",
     "noLicense": "No license",
-    "overview": "Lightline VPN Panel Overview"
+    "overview": "Lightline VPN Panel Overview",
+    "daysLeft": "days left",
+    "unlimited": "Unlimited"
   },
   "nodes": {
     "title": "Node Management",

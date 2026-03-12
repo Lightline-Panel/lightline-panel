@@ -417,7 +417,8 @@ async def get_dashboard(admin=Depends(get_current_admin), db: AsyncSession = Dep
             "active": lic is not None,
             "key": lic.license_key[:12] + "..." if lic else None,
             "expires_in": lic.expire_days if lic else None,
-            "status": lic.status if lic else "none"
+            "status": lic.status if lic else "none",
+            "days_left": max(0, (lic.created_at + timedelta(days=lic.expire_days) - datetime.now(timezone.utc)).days) if lic and lic.expire_days > 0 else None
         },
         "recent_activity": [
             {"id": l.id, "action": l.action, "details": l.details, "created_at": l.created_at.isoformat()}
@@ -790,7 +791,8 @@ async def get_licenses(admin=Depends(get_current_admin), db: AsyncSession = Depe
     return [{
         "id": l.id, "license_key": l.license_key, "created_at": l.created_at.isoformat(),
         "expire_days": l.expire_days, "status": l.status, "max_servers": l.max_servers,
-        "activated_servers": l.activated_servers, "server_fingerprint": l.server_fingerprint
+        "activated_servers": l.activated_servers, "server_fingerprint": l.server_fingerprint,
+        "days_left": max(0, (l.created_at + timedelta(days=l.expire_days) - datetime.now(timezone.utc)).days) if l.expire_days > 0 else None
     } for l in lics]
 
 @api_router.delete("/licenses/{license_id}")

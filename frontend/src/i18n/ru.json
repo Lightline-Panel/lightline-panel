@@ -57,7 +57,9 @@
     "uniqueIps": "уникальных IP",
     "noConnections": "Нет подключений",
     "noLicense": "Нет лицензии",
-    "overview": "Обзор Lightline VPN панели"
+    "overview": "Обзор Lightline VPN панели",
+    "daysLeft": "дней осталось",
+    "unlimited": "Безлимитно"
   },
   "nodes": {
     "title": "Управление серверами",

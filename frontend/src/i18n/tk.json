@@ -57,7 +57,9 @@
     "uniqueIps": "üýtgeşik IP",
     "noConnections": "Birikmeler ýok",
     "noLicense": "Lisenziýa ýok",
-    "overview": "Lightline VPN Panel syn"
+    "overview": "Lightline VPN Panel syn",
+    "daysLeft": "gün galdy",
+    "unlimited": "Çäksiz"
   },
   "nodes": {
     "title": "Serwer dolandyryşy",

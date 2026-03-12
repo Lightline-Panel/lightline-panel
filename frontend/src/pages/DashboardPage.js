@@ -77,8 +77,8 @@ export default function DashboardPage() {
           sub={data.connected_ips?.length ? `${data.connected_ips.length} ${t('dashboard.uniqueIps')}` : t('dashboard.noConnections')}
           color="bg-purple-500/10 text-purple-400" delay={0.3} />
         <StatCard icon={Key} label={t('dashboard.licenseStatus')} value={data.license.active ? t('common.active') : 'N/A'}
-          sub={data.license.key || t('dashboard.noLicense')}
-          color="bg-amber-500/10 text-amber-400" delay={0.4} />
+          sub={data.license.key ? (data.license.days_left !== null ? `${data.license.days_left} ${t('dashboard.daysLeft')}` : data.license.key) : t('dashboard.noLicense')}
+          color={data.license.days_left !== null && data.license.days_left <= 7 ? "bg-red-500/10 text-red-400" : "bg-amber-500/10 text-amber-400"} delay={0.4} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
