@@ -552,24 +552,22 @@ async def _get_node_server_info(node) -> dict:
 
 
 async def _build_user_ss_url_from_node(user, node, db, force_port: int = None) -> str:
-    """Build a multi-user AEAD-2022 ss:// URL.
+    """Build a per-user ss:// URL using the user's unique password.
     
-    Fetches the server's master key and port from the node's /server-info.
-    Combines with the user's unique key for the multi-user URL format:
-      ss://BASE64(method:server-key:user-key)@host:port#tag
+    Fetches the actual port from the node's /server-info.
+    Each user has their own password on outline-ss-server (same port).
+    Format: ss://BASE64(method:password)@host:port#tag
     """
     if not node:
         return ""
     info = await _get_node_server_info(node)
-    server_key = info.get('password', '')
     node_reported_port = info.get('port', 0)
     ss_port = force_port or node_reported_port or node.ss_port or await _get_global_ss_port(db)
-    user_key = user.ss_password or ''
-    if not server_key or not user_key:
+    password = user.ss_password or ''
+    if not password:
         return ""
     return build_ss_url(
-        server_key=server_key,
-        user_key=user_key,
+        password=password,
         host=node.ip,
         port=ss_port,
         tag=user.username,

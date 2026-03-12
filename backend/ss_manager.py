@@ -1,32 +1,33 @@
 """Lightline — Internal Shadowsocks credential manager.
 
-Multi-user AEAD-2022 mode (2022-blake3-aes-128-gcm).
-Each user gets a unique key. The server has a master key.
+Uses outline-ss-server for multi-user support on the same port.
+Each user gets a unique password with chacha20-ietf-poly1305.
 
-ss:// URL format for multi-user AEAD-2022:
-  ss://BASE64(method:server-key:user-key)@host:port#tag
+ss:// URL format (standard SIP002):
+  ss://BASE64(method:password)@host:port#tag
 """
 
 import base64
 import secrets
+import string
 
 
-SS_METHOD = "2022-blake3-aes-128-gcm"
-SS_KEY_BYTES = 16  # aes-128-gcm requires 16-byte keys
+SS_METHOD = "chacha20-ietf-poly1305"
 
 
-def generate_password() -> str:
-    """Generate a base64-encoded random key for AEAD-2022 user."""
-    return base64.b64encode(secrets.token_bytes(SS_KEY_BYTES)).decode()
+def generate_password(length: int = 24) -> str:
+    """Generate a random password for a Shadowsocks user."""
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
-def build_ss_url(server_key: str, user_key: str, host: str, port: int, tag: str = "") -> str:
-    """Build a proper ss:// URL for multi-user AEAD-2022.
+def build_ss_url(password: str, host: str, port: int, tag: str = "") -> str:
+    """Build a proper ss:// URL.
 
-    Format: ss://BASE64(method:server-key:user-key)@host:port#tag
-    The server-key is the node's master key, user-key is per-user.
+    Format: ss://BASE64(method:password)@host:port#tag
+    This is the SIP002 URI format used by Outline and Shadowsocks clients.
     """
-    userinfo = f"{SS_METHOD}:{server_key}:{user_key}"
+    userinfo = f"{SS_METHOD}:{password}"
     encoded = base64.urlsafe_b64encode(userinfo.encode()).decode().rstrip('=')
     url = f"ss://{encoded}@{host}:{port}"
     if tag:
@@ -55,15 +56,13 @@ def parse_ss_url(url: str) -> dict:
         decoded = base64.urlsafe_b64decode(encoded).decode()
     except Exception:
         return {}
-    parts = decoded.split(':')
-    if len(parts) == 3:
-        method, server_key, user_key = parts
-        return {"method": method, "server_key": server_key, "user_key": user_key,
-                "host": hostport.rsplit(':', 1)[0] if ':' in hostport else hostport,
-                "port": int(hostport.rsplit(':', 1)[1]) if ':' in hostport else 0, "tag": tag}
-    elif len(parts) == 2:
-        method, password = parts
-        return {"method": method, "password": password,
-                "host": hostport.rsplit(':', 1)[0] if ':' in hostport else hostport,
-                "port": int(hostport.rsplit(':', 1)[1]) if ':' in hostport else 0, "tag": tag}
-    return {}
+    if ':' not in decoded:
+        return {}
+    method, password = decoded.split(':', 1)
+    if ':' in hostport:
+        host, port_str = hostport.rsplit(':', 1)
+        port = int(port_str)
+    else:
+        host = hostport
+        port = 0
+    return {"method": method, "password": password, "host": host, "port": port, "tag": tag}
