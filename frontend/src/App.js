@@ -21,15 +21,10 @@ import AuditLogsPage from '@/pages/AuditLogsPage';
 import { Loader2 } from 'lucide-react';
 import { useEffect } from 'react';
 
-// Initialize theme from localStorage, default to dark
+// Always use dark theme
 function useInitTheme() {
   useEffect(() => {
-    const saved = localStorage.getItem('lightline_theme');
-    if (saved === 'light') {
-      document.documentElement.classList.remove('dark');
-    } else {
-      document.documentElement.classList.add('dark');
-    }
+    document.documentElement.classList.add('dark');
   }, []);
 }
 
@@ -49,8 +44,8 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-      <Route path="/nodes" element={<ProtectedRoute><NodesPage /></ProtectedRoute>} />
       <Route path="/users" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
+      <Route path="/nodes" element={<ProtectedRoute><NodesPage /></ProtectedRoute>} />
       <Route path="/traffic" element={<ProtectedRoute><TrafficPage /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
       <Route path="/audit-logs" element={<ProtectedRoute><AuditLogsPage /></ProtectedRoute>} />

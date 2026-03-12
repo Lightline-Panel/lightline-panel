@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -17,7 +16,7 @@ import { motion } from 'framer-motion';
 export default function SettingsPage() {
   const { t, lang, setLang } = useI18n();
   const { user } = useAuth();
-  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+  
   const [settings, setSettings] = useState({});
   const [totpSetup, setTotpSetup] = useState(null);
   const [totpCode, setTotpCode] = useState('');
@@ -33,16 +32,6 @@ export default function SettingsPage() {
       if (data.ss_port) setSsPort(data.ss_port);
     }).catch(() => {});
   }, []);
-
-  const toggleTheme = (dark) => {
-    setIsDark(dark);
-    if (dark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem('lightline_theme', dark ? 'dark' : 'light');
-  };
 
   const handleBackup = async () => {
     try {
@@ -100,44 +89,29 @@ export default function SettingsPage() {
     <div className="space-y-6" data-testid="settings-page">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-white" style={{ fontFamily: 'Outfit' }}>{t('settings.title')}</h1>
-        <p className="text-sm text-gray-500 mt-1">Configure panel preferences</p>
+        <p className="text-sm text-gray-500 mt-1">{t('settings.subtitle')}</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Appearance */}
+        {/* Language */}
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="ll-card border-white/5">
             <CardHeader>
               <CardTitle className="text-base text-white flex items-center gap-2" style={{ fontFamily: 'Outfit' }}>
-                <Moon className="w-4 h-4 text-cyan-400" /> {t('settings.theme')}
+                <Globe className="w-4 h-4 text-cyan-400" /> {t('settings.language')}
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <Label className="text-gray-300">{isDark ? t('settings.darkMode') : t('settings.lightMode')}</Label>
-                  <p className="text-xs text-gray-500">Toggle between dark and light themes</p>
-                </div>
-                <Switch checked={isDark} onCheckedChange={toggleTheme} data-testid="theme-switch" />
-              </div>
-
-              <Separator className="bg-white/5" />
-
-              <div className="space-y-2">
-                <Label className="text-gray-400 text-xs uppercase flex items-center gap-2">
-                  <Globe className="w-3.5 h-3.5" /> {t('settings.language')}
-                </Label>
-                <Select value={lang} onValueChange={setLang}>
-                  <SelectTrigger className="bg-black/50 border-white/10 text-gray-200" data-testid="settings-language-select">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-zinc-950 border-white/10 text-gray-200">
-                    <SelectItem value="en" className="text-gray-200 focus:text-white focus:bg-cyan-900/30">English</SelectItem>
-                    <SelectItem value="ru" className="text-gray-200 focus:text-white focus:bg-cyan-900/30">Русский</SelectItem>
-                    <SelectItem value="tk" className="text-gray-200 focus:text-white focus:bg-cyan-900/30">Türkmen</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <CardContent className="space-y-2">
+              <Select value={lang} onValueChange={setLang}>
+                <SelectTrigger className="bg-black/50 border-white/10 text-gray-200" data-testid="settings-language-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-zinc-950 border-white/10 text-gray-200">
+                  <SelectItem value="en" className="text-gray-200 focus:text-white focus:bg-cyan-900/30">English</SelectItem>
+                  <SelectItem value="ru" className="text-gray-200 focus:text-white focus:bg-cyan-900/30">Русский</SelectItem>
+                  <SelectItem value="tk" className="text-gray-200 focus:text-white focus:bg-cyan-900/30">Türkmen</SelectItem>
+                </SelectContent>
+              </Select>
             </CardContent>
           </Card>
         </motion.div>
@@ -147,14 +121,14 @@ export default function SettingsPage() {
           <Card className="ll-card border-white/5">
             <CardHeader>
               <CardTitle className="text-base text-white flex items-center gap-2" style={{ fontFamily: 'Outfit' }}>
-                <Server className="w-4 h-4 text-cyan-400" /> Shadowsocks Port
+                <Server className="w-4 h-4 text-cyan-400" /> {t('settings.ssPort')}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-sm text-gray-400">Global SS port used by all nodes. Changing this will update all existing user URLs automatically.</p>
+              <p className="text-sm text-gray-400">{t('settings.ssPortDesc')}</p>
               <div className="flex gap-3 items-end">
                 <div className="flex-1 space-y-1.5">
-                  <Label className="text-gray-400 text-xs uppercase">Port</Label>
+                  <Label className="text-gray-400 text-xs uppercase">{t('settings.portLabel')}</Label>
                   <Input type="number" value={ssPort} onChange={(e) => setSsPort(e.target.value)}
                     className="bg-black/50 border-white/10 font-mono text-gray-200" data-testid="ss-port-input" />
                 </div>
@@ -183,7 +157,7 @@ export default function SettingsPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-sm text-gray-400">Export all panel data including nodes, users, licenses, and settings.</p>
+              <p className="text-sm text-gray-400">{t('settings.backupDesc')}</p>
               <div className="flex gap-3">
                 <Button onClick={handleBackup} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2" data-testid="backup-button">
                   <Download className="w-4 h-4" /> {t('settings.createBackup')}
@@ -211,7 +185,7 @@ export default function SettingsPage() {
                 <span className="font-mono text-amber-400">mock</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">Environment</span>
+                <span className="text-gray-500">{t('settings.environment')}</span>
                 <span className="font-mono text-gray-400">development</span>
               </div>
             </CardContent>
@@ -223,23 +197,23 @@ export default function SettingsPage() {
           <Card className="ll-card border-white/5">
             <CardHeader>
               <CardTitle className="text-base text-white flex items-center gap-2" style={{ fontFamily: 'Outfit' }}>
-                <Shield className="w-4 h-4 text-cyan-400" /> Admin Profile
+                <Shield className="w-4 h-4 text-cyan-400" /> {t('settings.adminProfile')}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {user && (
                 <>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Username</span>
+                    <span className="text-gray-500">{t('settings.username')}</span>
                     <span className="text-gray-300">{user.username}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Role</span>
+                    <span className="text-gray-500">{t('settings.role')}</span>
                     <span className="font-mono text-cyan-400">{user.role}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Created</span>
-                    <span className="font-mono text-xs text-gray-500">{user.created_at ? new Date(user.created_at).toLocaleDateString() : '—'}</span>
+                    <span className="text-gray-500">{t('settings.created')}</span>
+                    <span className="font-mono text-xs text-gray-500">{user.created_at ? new Date(user.created_at).toLocaleDateString('en-GB') : '—'}</span>
                   </div>
                 </>
               )}
@@ -288,7 +262,7 @@ export default function SettingsPage() {
         <DialogContent className="bg-zinc-950 border-white/10 max-w-sm mx-4">
           <DialogHeader>
             <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('settings.setup2FA')}</DialogTitle>
-            <DialogDescription className="text-gray-500 text-sm">Scan this QR code with your authenticator app</DialogDescription>
+            <DialogDescription className="text-gray-500 text-sm">{t('settings.scanQR')}</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col items-center gap-4 py-4">
             {totpSetup?.qr_code && (
@@ -297,13 +271,13 @@ export default function SettingsPage() {
               </div>
             )}
             <div className="w-full space-y-1 px-2">
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Manual Entry Key</p>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">{t('settings.manualKey')}</p>
               <p className="font-mono text-xs text-cyan-400 text-center break-all bg-black/50 rounded-lg p-2 border border-white/5 select-all">
                 {totpSetup?.secret}
               </p>
             </div>
             <div className="w-full space-y-2">
-              <Label className="text-gray-400 text-xs uppercase">Verification Code</Label>
+              <Label className="text-gray-400 text-xs uppercase">{t('settings.verificationCode')}</Label>
               <Input value={totpCode} onChange={(e) => setTotpCode(e.target.value)}
                 placeholder="000000" maxLength={6}
                 className="bg-black/50 border-white/10 text-gray-200 font-mono text-center text-lg tracking-[0.5em]"
@@ -325,7 +299,7 @@ export default function SettingsPage() {
         <DialogContent className="bg-zinc-950 border-white/10 max-w-sm mx-4">
           <DialogHeader>
             <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('settings.disable2FA')}</DialogTitle>
-            <DialogDescription className="text-gray-500 text-sm">Enter your current TOTP code to disable 2FA</DialogDescription>
+            <DialogDescription className="text-gray-500 text-sm">{t('settings.enterTotpDisable')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
             <Input value={disableCode} onChange={(e) => setDisableCode(e.target.value)}

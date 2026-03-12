@@ -60,7 +60,7 @@ export default function DashboardPage() {
         <h1 className="text-2xl sm:text-3xl font-bold text-white" style={{ fontFamily: 'Outfit' }}>
           {t('dashboard.title')}
         </h1>
-        <p className="text-sm text-gray-500 mt-1">Lightline VPN Panel Overview</p>
+        <p className="text-sm text-gray-500 mt-1">{t('dashboard.overview')}</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-6">
@@ -73,11 +73,11 @@ export default function DashboardPage() {
         <StatCard icon={Activity} label={t('dashboard.trafficToday')} value={formatBytes(data.traffic.today)}
           sub={`${t('dashboard.trafficTotal')}: ${formatBytes(data.traffic.total)}`}
           color="bg-emerald-500/10 text-emerald-400" delay={0.2} />
-        <StatCard icon={Smartphone} label="Connected Devices" value={data.connected_devices || 0}
-          sub={data.connected_ips?.length ? `${data.connected_ips.length} unique IPs` : 'No connections'}
+        <StatCard icon={Smartphone} label={t('dashboard.connectedDevices')} value={data.connected_devices || 0}
+          sub={data.connected_ips?.length ? `${data.connected_ips.length} ${t('dashboard.uniqueIps')}` : t('dashboard.noConnections')}
           color="bg-purple-500/10 text-purple-400" delay={0.3} />
         <StatCard icon={Key} label={t('dashboard.licenseStatus')} value={data.license.active ? t('common.active') : 'N/A'}
-          sub={data.license.key || 'No license'}
+          sub={data.license.key || t('dashboard.noLicense')}
           color="bg-amber-500/10 text-amber-400" delay={0.4} />
       </div>
 
@@ -134,7 +134,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <span className="text-[10px] text-gray-600 font-mono whitespace-nowrap">
-                    {new Date(log.created_at).toLocaleDateString()}
+                    {new Date(log.created_at).toLocaleDateString('en-GB')}
                   </span>
                 </div>
               ))}

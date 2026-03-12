@@ -52,7 +52,12 @@
     "licenseStatus": "Lisenziýa ýagdaýy",
     "recentActivity": "Soňky hereketler",
     "nodeHealth": "Serwer ýagdaýy",
-    "quickActions": "Çalt hereketler"
+    "quickActions": "Çalt hereketler",
+    "connectedDevices": "Birikdirilen enjamlar",
+    "uniqueIps": "üýtgeşik IP",
+    "noConnections": "Birikmeler ýok",
+    "noLicense": "Lisenziýa ýok",
+    "overview": "Lightline VPN Panel syn"
   },
   "nodes": {
     "title": "Serwer dolandyryşy",
@@ -67,7 +72,20 @@
     "syncKeys": "Açarlary sinhronlamak",
     "lastHeartbeat": "Soňky jogap",
     "userCount": "Ulanyjylar",
-    "deleteConfirm": "Bu serweri pozmak isleýärsiňizmi?"
+    "deleteConfirm": "Bu serweri pozmak isleýärsiňizmi?",
+    "subtitle": "Shadowsocks VPN serwerleriňizi dolandyryň",
+    "refresh": "Täzelemek",
+    "regenUrls": "URL täzelemek",
+    "certificate": "Sertifikat",
+    "status": "Ýagdaý",
+    "devices": "Enjamlar",
+    "port": "Port",
+    "noHeartbeat": "Jogap ýok",
+    "reconnect": "Täzeden birikdirmek",
+    "showCertificate": "Sertifikaty görkezmek",
+    "copyCertificate": "Sertifikaty göçürmek",
+    "certDialogTitle": "Panel sertifikaty",
+    "certDialogDesc": "Bu sertifikaty nod serweriňize göçüriň"
   },
   "users": {
     "title": "Ulanyjy dolandyryşy",
@@ -83,14 +101,21 @@
     "qrCode": "QR kod",
     "accessUrl": "Giriş URL",
     "trafficUsed": "Ulanylan",
-    "deleteConfirm": "Bu ulanyjyny pozmak isleýärsiňizmi?"
+    "deleteConfirm": "Bu ulanyjyny pozmak isleýärsiňizmi?",
+    "subtitle": "VPN giriş açarlary we ulanyjylar dolandyrmak",
+    "devices": "Enjamlar",
+    "expires": "Gutarýar",
+    "switchAll": "Hemmesini çalyşmak",
+    "copySubUrl": "Ýazylma URL göçürmek",
+    "node": "Serwer"
   },
   "traffic": {
     "title": "Trafik statistikasy",
     "daily": "Günlük trafik",
     "byUser": "Ulanyjy boýunça",
     "byNode": "Serwer boýunça",
-    "last30Days": "Soňky 30 gün"
+    "last30Days": "Soňky 30 gün",
+    "totalTraffic": "Jemi trafik"
   },
   "licenses": {
     "title": "Lisenziýa dolandyryşy",
@@ -103,7 +128,14 @@
     "validate": "Barlamak",
     "serverFingerprint": "Serwer barmagy",
     "valid": "Dogry",
-    "invalid": "Nädogry"
+    "invalid": "Nädogry",
+    "subtitle": "Lisenziýa açarlaryny döretmek we dolandyrmak",
+    "generateNew": "Täze lisenziýa açary döretmek",
+    "checkValidity": "Lisenziýa açarynyň dogrudygyny barlamak",
+    "days": "gün",
+    "expiresIn": "Gutarýança",
+    "max": "Maks",
+    "active": "Işjeň"
   },
   "settings": {
     "title": "Sazlamalar",
@@ -124,7 +156,21 @@
     "twoFactorDisabled": "Ýapyk — açmagy maslahat berýäris",
     "enable2FA": "2FA açmak",
     "disable2FA": "2FA ýapmak",
-    "setup2FA": "Iki faktorly tassyklama sazlamasy"
+    "setup2FA": "Iki faktorly tassyklama sazlamasy",
+    "subtitle": "Panel sazlamalaryny düzüň",
+    "ssPort": "Shadowsocks porty",
+    "ssPortDesc": "Ähli serwerler üçin umumy SS porty. Üýtgetme ähli ulanyjy URL-lerini täzelär.",
+    "portLabel": "Port",
+    "backupDesc": "Paneldäki ähli maglumatlary eksport etmek: serwerler, ulanyjylar, lisenziýalar we sazlamalar.",
+    "adminProfile": "Admin profili",
+    "username": "Ulanyjy ady",
+    "role": "Wezipe",
+    "created": "Döredilen",
+    "environment": "Gurşaw",
+    "scanQR": "Tassyklama programmaňyzda QR kody skanirläň",
+    "manualKey": "El bilen giriş açary",
+    "verificationCode": "Tassyklama kody",
+    "enterTotpDisable": "2FA-ny ýapmak üçin häzirki TOTP kodyňyzy giriziň"
   },
   "audit": {
     "title": "Ýazgylar",

@@ -108,10 +108,10 @@ export default function UsersPage() {
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-2xl sm:text-3xl font-bold text-white truncate" style={{ fontFamily: 'Outfit' }}>{t('users.title')}</h1>
-            <p className="text-sm text-gray-500 mt-1 hidden sm:block">Manage VPN access keys and users</p>
+            <p className="text-sm text-gray-500 mt-1 hidden sm:block">{t('users.subtitle')}</p>
           </div>
           <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 shrink-0" data-testid="add-user-button">
-            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">{t('users.addUser')}</span><span className="sm:hidden">Add</span>
+            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">{t('users.addUser')}</span><span className="sm:hidden">{t('common.add')}</span>
           </Button>
         </div>
         <div className="flex items-center gap-2">
@@ -119,7 +119,7 @@ export default function UsersPage() {
             className="bg-black/50 border-white/10 h-10 text-sm text-gray-200 flex-1" data-testid="user-search-input" />
           <Button variant="outline" onClick={() => { setBulkSwitchOpen(true); setBulkNodeId(''); }}
             className="border-white/10 text-gray-300 gap-2 shrink-0 h-10" data-testid="bulk-switch-button">
-            <Users className="w-4 h-4" /> <span className="hidden sm:inline">Switch All</span>
+            <Users className="w-4 h-4" /> <span className="hidden sm:inline">{t('users.switchAll')}</span>
           </Button>
         </div>
       </div>
@@ -135,7 +135,7 @@ export default function UsersPage() {
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('common.status')}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.assignedNode')}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.trafficUsed')}</TableHead>
-                  <TableHead className="text-gray-500 text-xs uppercase tracking-wider">Devices</TableHead>
+                  <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.devices')}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.expireDate')}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider text-right">{t('common.actions')}</TableHead>
                 </TableRow>
@@ -169,7 +169,7 @@ export default function UsersPage() {
                       )}
                     </TableCell>
                     <TableCell className="font-mono text-xs text-gray-500">
-                      {u.expire_date ? new Date(u.expire_date).toLocaleDateString() : '—'}
+                      {u.expire_date ? new Date(u.expire_date).toLocaleDateString('en-GB') : '—'}
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
@@ -213,7 +213,7 @@ export default function UsersPage() {
                               }}
                               className="text-gray-300 gap-2 min-h-[44px]"
                             >
-                              <Copy className="w-4 h-4" /> Copy Sub URL
+                              <Copy className="w-4 h-4" /> {t('users.copySubUrl')}
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuItem onClick={() => handleDelete(u)} className="text-red-400 gap-2 min-h-[44px]">
@@ -286,7 +286,7 @@ export default function UsersPage() {
                           }}
                           className="text-gray-300 gap-2 min-h-[44px]"
                         >
-                          <Copy className="w-4 h-4" /> Copy Sub URL
+                          <Copy className="w-4 h-4" /> {t('users.copySubUrl')}
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem onClick={() => handleDelete(u)} className="text-red-400 gap-2 min-h-[44px]">
@@ -297,15 +297,15 @@ export default function UsersPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
-                    <p className="text-gray-500 uppercase text-[10px]">Node</p>
+                    <p className="text-gray-500 uppercase text-[10px]">{t('users.node')}</p>
                     <p className="text-gray-400 truncate">{u.node_name || '—'}</p>
                   </div>
                   <div>
-                    <p className="text-gray-500 uppercase text-[10px]">Traffic</p>
+                    <p className="text-gray-500 uppercase text-[10px]">{t('users.trafficUsed')}</p>
                     <p className="text-gray-400 font-mono">{formatBytes(u.traffic_used)}</p>
                   </div>
                   <div>
-                    <p className="text-gray-500 uppercase text-[10px]">Devices</p>
+                    <p className="text-gray-500 uppercase text-[10px]">{t('users.devices')}</p>
                     <div className="flex items-center gap-1">
                       <Smartphone className="w-3 h-3 text-gray-500" />
                       <p className="text-gray-400">{u.online_devices || 0}</p>
@@ -315,8 +315,8 @@ export default function UsersPage() {
                     )}
                   </div>
                   <div>
-                    <p className="text-gray-500 uppercase text-[10px]">Expires</p>
-                    <p className="text-gray-400 font-mono">{u.expire_date ? new Date(u.expire_date).toLocaleDateString() : '—'}</p>
+                    <p className="text-gray-500 uppercase text-[10px]">{t('users.expires')}</p>
+                    <p className="text-gray-400 font-mono">{u.expire_date ? new Date(u.expire_date).toLocaleDateString('en-GB') : '—'}</p>
                   </div>
                 </div>
               </CardContent>

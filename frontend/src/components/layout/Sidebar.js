@@ -9,8 +9,8 @@ import { Button } from '@/components/ui/button';
 
 const navItems = [
   { path: '/', key: 'dashboard', icon: LayoutDashboard },
-  { path: '/nodes', key: 'nodes', icon: Server },
   { path: '/users', key: 'users', icon: Users },
+  { path: '/nodes', key: 'nodes', icon: Server },
   { path: '/traffic', key: 'traffic', icon: BarChart3 },
   { path: '/settings', key: 'settings', icon: Settings },
   { path: '/audit-logs', key: 'audit', icon: FileText },

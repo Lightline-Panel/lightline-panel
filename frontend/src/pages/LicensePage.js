@@ -63,7 +63,7 @@ export default function LicensePage() {
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-2xl sm:text-3xl font-bold text-white truncate" style={{ fontFamily: 'Outfit' }}>{t('licenses.title')}</h1>
-            <p className="text-sm text-gray-500 mt-1 hidden sm:block">Generate and manage license keys</p>
+            <p className="text-sm text-gray-500 mt-1 hidden sm:block">{t('licenses.subtitle')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button variant="outline" onClick={() => { setValidateOpen(true); setValidateResult(null); setValidateKey(''); }}
@@ -71,7 +71,7 @@ export default function LicensePage() {
               <ShieldCheck className="w-4 h-4" /> <span className="hidden sm:inline">{t('licenses.validate')}</span>
             </Button>
             <Button onClick={() => setCreateOpen(true)} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2" data-testid="create-license-button">
-              <Plus className="w-4 h-4" /> <span className="hidden sm:inline">{t('licenses.createLicense')}</span><span className="sm:hidden">Create</span>
+              <Plus className="w-4 h-4" /> <span className="hidden sm:inline">{t('licenses.createLicense')}</span><span className="sm:hidden">{t('common.add')}</span>
             </Button>
           </div>
         </div>
@@ -109,7 +109,7 @@ export default function LicensePage() {
                       </div>
                     </TableCell>
                     <TableCell><Badge variant={statusColor(lic.status)} className="text-[10px] h-5">{lic.status}</Badge></TableCell>
-                    <TableCell className="text-gray-400">{lic.expire_days} days</TableCell>
+                    <TableCell className="text-gray-400">{lic.expire_days} {t('licenses.days')}</TableCell>
                     <TableCell className="text-gray-400">{lic.max_servers}</TableCell>
                     <TableCell className="text-gray-400">{lic.activated_servers}</TableCell>
                     <TableCell className="text-right">
@@ -154,15 +154,15 @@ export default function LicensePage() {
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-xs">
                   <div>
-                    <p className="text-gray-500 uppercase text-[10px]">Expires</p>
+                    <p className="text-gray-500 uppercase text-[10px]">{t('users.expires')}</p>
                     <p className="text-gray-400">{lic.expire_days}d</p>
                   </div>
                   <div>
-                    <p className="text-gray-500 uppercase text-[10px]">Max</p>
+                    <p className="text-gray-500 uppercase text-[10px]">{t('licenses.max')}</p>
                     <p className="text-gray-400">{lic.max_servers}</p>
                   </div>
                   <div>
-                    <p className="text-gray-500 uppercase text-[10px]">Active</p>
+                    <p className="text-gray-500 uppercase text-[10px]">{t('licenses.active')}</p>
                     <p className="text-gray-400">{lic.activated_servers}</p>
                   </div>
                 </div>
@@ -175,7 +175,7 @@ export default function LicensePage() {
       {/* Create License Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
-          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('licenses.createLicense')}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Generate a new license key</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('licenses.createLicense')}</DialogTitle><DialogDescription className="text-gray-500 text-sm">{t('licenses.generateNew')}</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('licenses.expireDays')}</Label>
@@ -200,7 +200,7 @@ export default function LicensePage() {
       {/* Validate License Dialog */}
       <Dialog open={validateOpen} onOpenChange={setValidateOpen}>
         <DialogContent className="bg-zinc-950 border-white/10 max-w-sm">
-          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('licenses.validate')}</DialogTitle><DialogDescription className="text-gray-500 text-sm">Check license key validity</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('licenses.validate')}</DialogTitle><DialogDescription className="text-gray-500 text-sm">{t('licenses.checkValidity')}</DialogDescription></DialogHeader>
           <div className="space-y-4 mt-2">
             <div className="space-y-1.5">
               <Label className="text-gray-400 text-xs uppercase">{t('licenses.licenseKey')}</Label>
@@ -213,7 +213,7 @@ export default function LicensePage() {
                 <p className={`text-sm font-semibold ${validateResult.valid ? 'text-emerald-400' : 'text-red-400'}`}>
                   {validateResult.valid ? t('licenses.valid') : t('licenses.invalid')}
                 </p>
-                {validateResult.valid && <p className="text-xs text-gray-400 mt-1">Expires in {validateResult.expires_in_days} days</p>}
+                {validateResult.valid && <p className="text-xs text-gray-400 mt-1">{t('licenses.expiresIn')} {validateResult.expires_in_days} {t('licenses.days')}</p>}
                 {validateResult.reason && <p className="text-xs text-gray-400 mt-1">{validateResult.reason}</p>}
               </div>
             )}

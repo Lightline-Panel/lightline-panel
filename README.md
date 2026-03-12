@@ -64,9 +64,69 @@ docker compose up -d --build
 
 ---
 
+## Domain Name and SSL Setup (Recommended)
+
+For production use, you should set up a domain name and SSL certificate:
+
+### Step 1: Point your domain to the server
+
+1. Buy a domain name (e.g., `vpn.yourdomain.com`)
+2. Go to your domain's DNS settings
+3. Create an **A record** pointing to your server's IP:
+   - Type: `A`
+   - Name: `vpn` (or `@` for the root domain)
+   - Value: `YOUR_SERVER_IP`
+   - TTL: `300` (or leave default)
+
+4. Wait 5-30 minutes for DNS to propagate
+
+### Step 2: Configure the panel to use your domain
+
+Edit the `.env` file on your server:
+
+```bash
+nano /opt/lightline/.env
+```
+
+Add or update these lines:
+
+```env
+PANEL_DOMAIN=vpn.yourdomain.com
+PANEL_PORT=443
+```
+
+### Step 3: Enable automatic SSL with Let's Encrypt
+
+The panel includes Caddy reverse proxy for automatic SSL:
+
+1. Make sure port 80 and 443 are open in your firewall:
+   ```bash
+   sudo ufw allow 80
+   sudo ufw allow 443
+   ```
+
+2. Restart the panel to apply domain changes:
+   ```bash
+   cd /opt/lightline
+   docker compose restart
+   ```
+
+3. Caddy will automatically obtain and renew a free SSL certificate from Let's Encrypt
+
+4. Your panel will now be available at: `https://vpn.yourdomain.com`
+
+### Step 4: Update your Outline clients
+
+The subscription URL format will change to:
+```
+ssconf://vpn.yourdomain.com/api/sub/TOKEN
+```
+
+---
+
 ## First Login
 
-1. Open your browser and go to `http://YOUR_SERVER_IP`
+1. Open your browser and go to `https://YOUR_DOMAIN` (or `http://YOUR_SERVER_IP` if no domain)
 2. You'll see the login page
 3. Default credentials: **username:** `admin` / **password:** `admin123`
 4. **Change your password immediately** after first login in Settings

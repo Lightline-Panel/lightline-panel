@@ -65,7 +65,7 @@ export default function TrafficPage() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                   <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} tickLine={false} axisLine={false}
-                    tickFormatter={(d) => new Date(d).toLocaleDateString('en', { month: 'short', day: 'numeric' })} />
+                    tickFormatter={(d) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} />
                   <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} tickLine={false} axisLine={false}
                     tickFormatter={(v) => formatGb(v) + ' GB'} />
                   <Tooltip content={<CustomTooltip />} />
@@ -94,7 +94,7 @@ export default function TrafficPage() {
                 <TableHeader>
                   <TableRow className="border-white/5 hover:bg-transparent">
                     <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.username')}</TableHead>
-                    <TableHead className="text-gray-500 text-xs uppercase tracking-wider text-right">Total Traffic</TableHead>
+                    <TableHead className="text-gray-500 text-xs uppercase tracking-wider text-right">{t('traffic.totalTraffic')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

@@ -74,7 +74,7 @@ export default function AuditLogsPage() {
                     </TableCell>
                     <TableCell className="text-gray-400 text-sm max-w-xs truncate">{log.details || '—'}</TableCell>
                     <TableCell className="font-mono text-xs text-gray-500">{log.ip_address || '—'}</TableCell>
-                    <TableCell className="font-mono text-xs text-gray-500">{new Date(log.created_at).toLocaleString()}</TableCell>
+                    <TableCell className="font-mono text-xs text-gray-500">{new Date(log.created_at).toLocaleString('en-GB')}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -95,7 +95,7 @@ export default function AuditLogsPage() {
                   {log.action.replace(/_/g, ' ')}
                 </span>
                 <span className="text-[10px] text-gray-600 font-mono shrink-0">
-                  {new Date(log.created_at).toLocaleDateString()}
+                  {new Date(log.created_at).toLocaleDateString('en-GB')}
                 </span>
               </div>
               {log.details && <p className="text-xs text-gray-400 break-words">{log.details}</p>}

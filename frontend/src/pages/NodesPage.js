@@ -116,24 +116,24 @@ export default function NodesPage() {
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-2xl sm:text-3xl font-bold text-white truncate" style={{ fontFamily: 'Outfit' }}>{t('nodes.title')}</h1>
-            <p className="text-sm text-gray-500 mt-1 hidden sm:block">Manage your Shadowsocks VPN servers</p>
+            <p className="text-sm text-gray-500 mt-1 hidden sm:block">{t('nodes.subtitle')}</p>
           </div>
           <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 shrink-0" data-testid="add-node-button">
-            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">{t('nodes.addNode')}</span><span className="sm:hidden">Add</span>
+            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">{t('nodes.addNode')}</span><span className="sm:hidden">{t('common.add')}</span>
           </Button>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto pb-1 -mb-1">
           <Button onClick={refreshAll} disabled={refreshing} variant="outline"
             className="border-white/10 text-gray-300 gap-2 shrink-0 h-9 text-xs" data-testid="refresh-all-button">
-            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> {t('nodes.refresh')}
           </Button>
           <Button onClick={regenerateUrls} variant="outline"
             className="border-white/10 text-gray-300 gap-2 shrink-0 h-9 text-xs">
-            <RefreshCw className="w-3.5 h-3.5" /> Regen URLs
+            <RefreshCw className="w-3.5 h-3.5" /> {t('nodes.regenUrls')}
           </Button>
           <Button onClick={showCertificate} variant="outline"
             className="border-white/10 text-gray-300 gap-2 shrink-0 h-9 text-xs">
-            <ShieldCheck className="w-3.5 h-3.5" /> Certificate
+            <ShieldCheck className="w-3.5 h-3.5" /> {t('nodes.certificate')}
           </Button>
         </div>
       </div>
@@ -174,10 +174,10 @@ export default function NodesPage() {
                           <Pencil className="w-3.5 h-3.5" /> {t('common.edit')}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={showCertificate} className="text-gray-300 gap-2 min-h-[44px]">
-                          <ShieldCheck className="w-3.5 h-3.5" /> Show Certificate
+                          <ShieldCheck className="w-3.5 h-3.5" /> {t('nodes.showCertificate')}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => healthCheck(node.id)} className="text-gray-300 gap-2 min-h-[44px]">
-                          <RefreshCw className="w-3.5 h-3.5" /> Reconnect
+                          <RefreshCw className="w-3.5 h-3.5" /> {t('nodes.reconnect')}
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleDelete(node)} className="text-red-400 gap-2 min-h-[44px]">
                           <Trash2 className="w-3.5 h-3.5" /> {t('common.delete')}
@@ -188,7 +188,7 @@ export default function NodesPage() {
 
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     <div>
-                      <p className="text-[10px] text-gray-500 uppercase">Status</p>
+                      <p className="text-[10px] text-gray-500 uppercase">{t('nodes.status')}</p>
                       <Badge variant={node.status === 'online' ? 'default' : 'destructive'} className="text-[10px] h-5 mt-0.5">
                         {node.status}
                       </Badge>
@@ -202,7 +202,7 @@ export default function NodesPage() {
                       <p className="text-xs text-gray-300 mt-0.5">{node.user_count}</p>
                     </div>
                     <div>
-                      <p className="text-[10px] text-gray-500 uppercase">Devices</p>
+                      <p className="text-[10px] text-gray-500 uppercase">{t('nodes.devices')}</p>
                       <div className="flex items-center gap-1 mt-0.5">
                         <Smartphone className="w-3 h-3 text-gray-500" />
                         <p className="text-xs text-gray-300">{node.connected_devices || 0}</p>
@@ -218,7 +218,7 @@ export default function NodesPage() {
                       </p>
                     </div>
                     <p className="text-[10px] text-gray-600">
-                      Port: {node.port || 62050} · {node.last_heartbeat ? new Date(node.last_heartbeat).toLocaleString() : 'No heartbeat'}
+                      {t('nodes.port')}: {node.port || 62050} · {node.last_heartbeat ? new Date(node.last_heartbeat).toLocaleString('en-GB') : t('nodes.noHeartbeat')}
                     </p>
                   </div>
                 </CardContent>
@@ -251,7 +251,7 @@ export default function NodesPage() {
                 placeholder="e.g. 45.33.21.10" className="bg-black/50 border-white/10 font-mono text-sm text-gray-200" data-testid="node-ip-input" />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-gray-400 text-xs uppercase">Port</Label>
+              <Label className="text-gray-400 text-xs uppercase">{t('nodes.port')}</Label>
               <Input type="number" value={form.port} onChange={(e) => setForm({ ...form, port: parseInt(e.target.value) || 62050 })}
                 placeholder="62050" className="bg-black/50 border-white/10 font-mono text-sm text-gray-200" data-testid="node-port-input" />
             </div>
@@ -276,9 +276,9 @@ export default function NodesPage() {
       <Dialog open={certDialogOpen} onOpenChange={setCertDialogOpen}>
         <DialogContent className="bg-zinc-950 border-white/10 max-w-lg mx-4">
           <DialogHeader>
-            <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>Panel Certificate</DialogTitle>
+            <DialogTitle className="text-white" style={{ fontFamily: 'Outfit' }}>{t('nodes.certDialogTitle')}</DialogTitle>
             <DialogDescription className="text-gray-500 text-sm">
-              Copy this certificate to your node server as <span className="font-mono text-cyan-400">ssl_client_cert.pem</span>
+              {t('nodes.certDialogDesc')} — <span className="font-mono text-cyan-400">ssl_client_cert.pem</span>
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 mt-2">
@@ -302,7 +302,7 @@ export default function NodesPage() {
               }}
               className="w-full bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 min-h-[48px] active:scale-95 transition-transform touch-manipulation"
             >
-              <Copy className="w-4 h-4" /> Copy Certificate
+              <Copy className="w-4 h-4" /> {t('nodes.copyCertificate')}
             </Button>
           </div>
         </DialogContent>

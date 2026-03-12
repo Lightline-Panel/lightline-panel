@@ -89,10 +89,30 @@ install_git() {
   ok "Git installed"
 }
 
+install_npm() {
+  if command -v npm &>/dev/null; then
+    ok "npm already installed: $(npm --version)"
+    return
+  fi
+  log "Installing Node.js and npm..."
+  if command -v apt-get &>/dev/null; then
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y -qq nodejs
+  elif command -v yum &>/dev/null; then
+    curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+    yum install -y nodejs
+  else
+    warn "Could not detect package manager. Please install Node.js/npm manually."
+    return
+  fi
+  ok "Node.js $(node --version) and npm $(npm --version) installed"
+}
+
 log "Checking dependencies..."
 install_docker
 install_docker_compose
 install_git
+install_npm
 
 # ── Clone or update repository ──
 
