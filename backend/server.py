@@ -235,30 +235,56 @@ async def _node_connect_and_action(node: Node, action: str) -> bool:
         return False
 
 
-async def deactivate_user_on_node(user: VPNUser, node: Node, db: AsyncSession, reason: str) -> bool:
-    """In single-password mode, we stop ss-server if no active users remain."""
+async def _add_user_to_node(node: Node, username: str, password: str) -> bool:
+    """Push a user key to a node's SS config and restart ss-server."""
     try:
-        # Check if there are any other active users on this node (excluding this user)
-        active_count = (await db.execute(
-            select(func.count(VPNUser.id)).where(
-                VPNUser.assigned_node_id == node.id,
-                VPNUser.status == 'active',
-                VPNUser.id != user.id
-            )
-        )).scalar() or 0
-        
-        # If this was the last active user, stop the server
-        if active_count == 0:
-            success = await _node_connect_and_action(node, 'stop')
-            if success:
-                logger.info(f"Stopped ss-server on node {node.name} (no active users): {reason}")
-            else:
-                logger.warning(f"Failed to stop ss-server on node {node.name}: {reason}")
-        else:
-            logger.info(f"Node {node.name} still has {active_count} active users, keeping server running")
-        
+        connect_resp = await _node_request(node, 'POST', '/connect')
+        if not connect_resp or connect_resp.status_code != 200:
+            logger.warning(f"Node {node.name}: failed to connect for user add")
+            return False
+        sid = connect_resp.json().get('session_id')
+        if not sid:
+            return False
+        resp = await _node_request(node, 'POST', '/users/add',
+                                   json={"session_id": sid, "username": username, "password": password})
+        if resp and resp.status_code == 200:
+            logger.info(f"Added user '{username}' to node {node.name}")
+            return True
+        logger.warning(f"Node {node.name}: /users/add failed ({resp.status_code if resp else 'no response'})")
+        return False
+    except Exception as e:
+        logger.error(f"Error adding user {username} to node {node.name}: {e}")
+        return False
+
+
+async def _remove_user_from_node(node: Node, username: str) -> bool:
+    """Remove a user key from a node's SS config and restart ss-server."""
+    try:
+        connect_resp = await _node_request(node, 'POST', '/connect')
+        if not connect_resp or connect_resp.status_code != 200:
+            logger.warning(f"Node {node.name}: failed to connect for user remove")
+            return False
+        sid = connect_resp.json().get('session_id')
+        if not sid:
+            return False
+        resp = await _node_request(node, 'POST', '/users/remove',
+                                   json={"session_id": sid, "username": username})
+        if resp and resp.status_code == 200:
+            logger.info(f"Removed user '{username}' from node {node.name}")
+            return True
+        logger.warning(f"Node {node.name}: /users/remove failed ({resp.status_code if resp else 'no response'})")
+        return False
+    except Exception as e:
+        logger.error(f"Error removing user {username} from node {node.name}: {e}")
+        return False
+
+
+async def deactivate_user_on_node(user: VPNUser, node: Node, db: AsyncSession, reason: str) -> bool:
+    """Remove user's key from node so they can no longer connect."""
+    try:
+        await _remove_user_from_node(node, user.username)
+        logger.info(f"Deactivated user '{user.username}' on node {node.name}: {reason}")
         return True
-                
     except Exception as e:
         logger.error(f"Error deactivating user {user.username}: {e}")
         return False
@@ -526,27 +552,24 @@ async def _get_node_server_info(node) -> dict:
 
 
 async def _build_user_ss_url_from_node(user, node, db, force_port: int = None) -> str:
-    """Build a proper ss:// URL by fetching real config from the node.
+    """Build a multi-user AEAD-2022 ss:// URL.
     
-    Fetches the actual server password and port from the node's /server-info.
-    Port priority: force_port > node /server-info (actual running port) > node.ss_port (DB) > global settings.
-    The node-reported port is the ACTUAL port ss-server is listening on.
+    Fetches the server's master key and port from the node's /server-info.
+    Combines with the user's unique key for the multi-user URL format:
+      ss://BASE64(method:server-key:user-key)@host:port#tag
     """
     if not node:
         return ""
     info = await _get_node_server_info(node)
-    password = info.get('password', '')
-    # Port: the node's /server-info returns the ACTUAL running port
-    # This is the most reliable source — it's what ss-server is actually bound to
+    server_key = info.get('password', '')
     node_reported_port = info.get('port', 0)
     ss_port = force_port or node_reported_port or node.ss_port or await _get_global_ss_port(db)
-    if not password:
-        # Fallback: use user's stored password (legacy)
-        password = user.ss_password or ''
-    if not password:
+    user_key = user.ss_password or ''
+    if not server_key or not user_key:
         return ""
     return build_ss_url(
-        password=password,
+        server_key=server_key,
+        user_key=user_key,
         host=node.ip,
         port=ss_port,
         tag=user.username,
@@ -723,6 +746,10 @@ async def regenerate_all_urls(admin=Depends(get_current_admin), db: AsyncSession
         try:
             node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
             if node:
+                if not user.ss_password:
+                    user.ss_password = generate_password()
+                # Re-push user key to node (handles node rebuild)
+                await _add_user_to_node(node, user.username, user.ss_password)
                 new_url = await _build_user_ss_url_from_node(user, node, db)
                 if new_url:
                     user.access_url = new_url
@@ -844,8 +871,9 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
     if req.assigned_node_id:
         node = (await db.execute(select(Node).where(Node.id == req.assigned_node_id))).scalar_one_or_none()
         if node:
+            # Push user key to the node and restart ss-server
+            await _add_user_to_node(node, user.username, ss_password)
             user.access_url = await _build_user_ss_url_from_node(user, node, db)
-            # Ensure server is running for the new user
             await ensure_server_running(node)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_created',
                     details=f'VPN user "{req.username}" created',
@@ -861,16 +889,23 @@ async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Dep
     data = req.model_dump(exclude_none=True)
     if 'expire_date' in data and data['expire_date']:
         data['expire_date'] = datetime.fromisoformat(data['expire_date'])
-    node_changed = 'assigned_node_id' in data and data['assigned_node_id'] != user.assigned_node_id
+    old_node_id = user.assigned_node_id
+    node_changed = 'assigned_node_id' in data and data['assigned_node_id'] != old_node_id
     for k, v in data.items():
         setattr(user, k, v)
     # Regenerate ss:// URL if node changed or user has no ss_password yet
     if node_changed or (user.assigned_node_id and not user.ss_password):
         if not user.ss_password:
             user.ss_password = generate_password()
+        # Remove from old node, add to new node
+        if node_changed and old_node_id:
+            old_node = (await db.execute(select(Node).where(Node.id == old_node_id))).scalar_one_or_none()
+            if old_node:
+                await _remove_user_from_node(old_node, user.username)
         if user.assigned_node_id:
             node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
             if node:
+                await _add_user_to_node(node, user.username, user.ss_password)
                 user.access_url = await _build_user_ss_url_from_node(user, node, db)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_updated',
                     details=f'VPN user "{user.username}" updated',
@@ -884,9 +919,15 @@ async def delete_user(user_id: int, request: Request, admin=Depends(get_current_
     if not user:
         raise HTTPException(404, "User not found")
     node_id = user.assigned_node_id
+    username = user.username
+    # Remove user key from the node
+    if node_id:
+        node = (await db.execute(select(Node).where(Node.id == node_id))).scalar_one_or_none()
+        if node:
+            await _remove_user_from_node(node, username)
     await db.execute(delete(TrafficLog).where(TrafficLog.user_id == user_id))
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_deleted',
-                    details=f'VPN user "{user.username}" deleted',
+                    details=f'VPN user "{username}" deleted',
                     ip_address=request.client.host if request.client else None))
     await db.delete(user)
     # Clear cached node stats so recreated users don't inherit stale data
@@ -906,11 +947,18 @@ async def switch_node(user_id: int, req: SwitchNodeRequest, request: Request, ad
         raise HTTPException(404, "Target node not found")
     if new_node.status != 'online':
         raise HTTPException(400, "Target node is not online")
+    # Remove user from old node
+    old_node_id = user.assigned_node_id
+    if old_node_id:
+        old_node = (await db.execute(select(Node).where(Node.id == old_node_id))).scalar_one_or_none()
+        if old_node:
+            await _remove_user_from_node(old_node, user.username)
     user.assigned_node_id = req.node_id
     if not user.ss_password:
         user.ss_password = generate_password()
+    # Add user to new node
+    await _add_user_to_node(new_node, user.username, user.ss_password)
     user.access_url = await _build_user_ss_url_from_node(user, new_node, db)
-    # Ensure server is running on the new node
     await ensure_server_running(new_node)
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_node_switched',
                     details=f'User "{user.username}" switched to "{new_node.name}"',
@@ -931,9 +979,16 @@ async def bulk_switch_node(req: BulkSwitchNodeRequest, request: Request, admin=D
     switched = 0
     for user in users:
         try:
+            # Remove from old node
+            if user.assigned_node_id:
+                old_node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+                if old_node:
+                    await _remove_user_from_node(old_node, user.username)
             user.assigned_node_id = req.node_id
             if not user.ss_password:
                 user.ss_password = generate_password()
+            # Add to new node
+            await _add_user_to_node(new_node, user.username, user.ss_password)
             user.access_url = await _build_user_ss_url_from_node(user, new_node, db)
             switched += 1
         except Exception as e:
