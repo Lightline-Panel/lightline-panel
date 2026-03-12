@@ -1,7 +1,7 @@
-from fastapi import FastAPI, HTTPException, Depends, Request, Body
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import PlainTextResponse, JSONResponse
 from sqlalchemy import select, func, desc, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
@@ -149,52 +149,6 @@ _node_stats_cache: dict = {}
 _node_last_bytes: dict = {}
 
 
-# ===== License Validation Middleware =====
-
-class LicenseMiddleware(BaseHTTPMiddleware):
-    """Check license validity for all API requests."""
-    
-    async def dispatch(self, request, call_next):
-        # Skip license check for auth endpoints and health checks
-        if request.url.path in ["/api/auth/login", "/api/auth/check-setup", "/api/auth/refresh", "/", "/api"]:
-            return await call_next(request)
-        
-        # Skip license check for static files and docs
-        if request.url.path.startswith("/docs") or request.url.path.startswith("/redoc") or request.url.path.startswith("/static"):
-            return await call_next(request)
-        
-        try:
-            async with async_session() as session:
-                lic = (await session.execute(
-                    select(License).where(License.status == 'active').limit(1)
-                )).scalar_one_or_none()
-                
-                if not lic:
-                    raise HTTPException(403, "No active license. Please activate a license key.")
-                
-                # Check if license is expired
-                if lic.expire_days > 0:
-                    expire_date = lic.created_at + timedelta(days=lic.expire_days)
-                    if datetime.now(timezone.utc) > expire_date:
-                        lic.status = 'expired'
-                        await session.commit()
-                        raise HTTPException(403, "License has expired. Please renew your license.")
-                
-                # Check server fingerprint
-                if lic.server_fingerprint and lic.server_fingerprint != get_server_fingerprint():
-                    lic.status = 'suspended'
-                    await session.commit()
-                    raise HTTPException(403, "License suspended due to server fingerprint mismatch.")
-                
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"License validation error: {e}")
-            raise HTTPException(500, "License validation failed")
-        
-        return await call_next(request)
-
-
 # ===== User Validation Helpers =====
 
 async def validate_user_access(user: VPNUser, db: AsyncSession) -> dict:
@@ -221,30 +175,58 @@ async def validate_user_access(user: VPNUser, db: AsyncSession) -> dict:
     }
 
 
-async def deactivate_user_on_node(user: VPNUser, node: Node, reason: str) -> bool:
+async def _node_connect_and_action(node: Node, action: str) -> bool:
+    """Connect to a node and perform a session-authenticated action (/start, /stop, /restart).
+    
+    Node endpoints require session_id from a prior /connect call.
+    """
+    try:
+        # Step 1: Establish session
+        connect_resp = await _node_request(node, 'POST', '/connect')
+        if not connect_resp or connect_resp.status_code != 200:
+            logger.warning(f"Node {node.name}: failed to connect for {action}")
+            return False
+        session_id = connect_resp.json().get('session_id')
+        if not session_id:
+            logger.warning(f"Node {node.name}: /connect returned no session_id")
+            return False
+        
+        # Step 2: Perform the action with session_id
+        resp = await _node_request(node, 'POST', f'/{action}', json={"session_id": session_id})
+        if resp and resp.status_code == 200:
+            logger.info(f"Node {node.name}: {action} succeeded")
+            return True
+        else:
+            logger.warning(f"Node {node.name}: {action} failed (status={resp.status_code if resp else 'no response'})")
+            return False
+    except Exception as e:
+        logger.error(f"Node {node.name}: {action} error: {e}")
+        return False
+
+
+async def deactivate_user_on_node(user: VPNUser, node: Node, db: AsyncSession, reason: str) -> bool:
     """In single-password mode, we stop ss-server if no active users remain."""
     try:
-        # Check if there are any other active users on this node
-        async with async_session() as session:
-            active_users = (await session.execute(
-                select(VPNUser).where(
-                    VPNUser.assigned_node_id == node.id,
-                    VPNUser.status == 'active'
-                )
-            )).scalars().all()
-            
-            # If this was the last active user, stop the server
-            if len(active_users) <= 1:
-                resp = await _node_request(node, 'POST', '/stop')
-                if resp and resp.status_code == 200:
-                    logger.info(f"Stopped ss-server on node {node.name} (no active users): {reason}")
-                    return True
-                else:
-                    logger.warning(f"Failed to stop ss-server on node {node.name}: {reason}")
-                    return False
+        # Check if there are any other active users on this node (excluding this user)
+        active_count = (await db.execute(
+            select(func.count(VPNUser.id)).where(
+                VPNUser.assigned_node_id == node.id,
+                VPNUser.status == 'active',
+                VPNUser.id != user.id
+            )
+        )).scalar() or 0
+        
+        # If this was the last active user, stop the server
+        if active_count == 0:
+            success = await _node_connect_and_action(node, 'stop')
+            if success:
+                logger.info(f"Stopped ss-server on node {node.name} (no active users): {reason}")
             else:
-                logger.info(f"Node {node.name} still has {len(active_users)-1} active users, keeping server running")
-                return True
+                logger.warning(f"Failed to stop ss-server on node {node.name}: {reason}")
+        else:
+            logger.info(f"Node {node.name} still has {active_count} active users, keeping server running")
+        
+        return True
                 
     except Exception as e:
         logger.error(f"Error deactivating user {user.username}: {e}")
@@ -254,21 +236,15 @@ async def deactivate_user_on_node(user: VPNUser, node: Node, reason: str) -> boo
 async def ensure_server_running(node: Node) -> bool:
     """Start ss-server on node if it's not already running."""
     try:
-        # Check server status
-        resp = await _node_request(node, 'GET', '/status')
+        # Check if already running via health endpoint (no session needed)
+        resp = await _node_request(node, 'GET', '/health')
         if resp and resp.status_code == 200:
-            status = resp.json()
-            if status.get('ss_server_running'):
+            data = resp.json()
+            if data.get('ss_running'):
                 return True
         
-        # Server not running, start it
-        resp = await _node_request(node, 'POST', '/start')
-        if resp and resp.status_code == 200:
-            logger.info(f"Started ss-server on node {node.name}")
-            return True
-        else:
-            logger.warning(f"Failed to start ss-server on node {node.name}")
-            return False
+        # Server not running, connect and start it
+        return await _node_connect_and_action(node, 'start')
     except Exception as e:
         logger.error(f"Error ensuring server running on {node.name}: {e}")
         return False
@@ -1019,11 +995,24 @@ async def get_subscription(access_token: str, db: AsyncSession = Depends(get_db)
     
     The Outline client fetches this URL and reads the ss:// link to connect.
     """
+    # Block subscription if license expired
+    lic = (await db.execute(select(License).where(License.status == 'active').limit(1))).scalar_one_or_none()
+    if not lic:
+        raise HTTPException(403, "Service unavailable")
     user = (await db.execute(select(VPNUser).where(VPNUser.access_token == access_token))).scalar_one_or_none()
     if not user:
         raise HTTPException(404, "Not found")
     if user.status != 'active':
         raise HTTPException(403, "Account suspended")
+    # Check user expiry and traffic inline
+    if user.expire_date and datetime.now(timezone.utc) > user.expire_date:
+        raise HTTPException(403, "Account expired")
+    if user.traffic_limit and user.traffic_limit > 0:
+        total_used = (await db.execute(
+            select(func.coalesce(func.sum(TrafficLog.bytes_transferred), 0)).where(TrafficLog.user_id == user.id)
+        )).scalar()
+        if total_used >= user.traffic_limit * 1024**3:
+            raise HTTPException(403, "Traffic limit exceeded")
     if not user.access_url:
         raise HTTPException(404, "No access URL configured")
     # Return the ss:// URL with ?outline=1 for Outline compatibility
@@ -1072,29 +1061,46 @@ async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(g
                 ss_port_changed = True
                 new_ss_port = int(value)
 
-    # When SS port changes, update all nodes' ss_port and regenerate all users' access_url
+    # When SS port changes, tell each node to change port + restart, then regenerate URLs
+    updated = 0
+    node_errors = 0
     if ss_port_changed and new_ss_port:
-        # Update all nodes' ss_port to match the new global port
         nodes = (await db.execute(select(Node))).scalars().all()
         for node in nodes:
             node.ss_port = new_ss_port
+            # Tell the actual node to change its SS port and restart ss-server
+            if node.status == 'online':
+                try:
+                    connect_resp = await _node_request(node, 'POST', '/connect')
+                    if connect_resp and connect_resp.status_code == 200:
+                        sid = connect_resp.json().get('session_id')
+                        if sid:
+                            resp = await _node_request(node, 'POST', '/config/port',
+                                                       json={"session_id": sid, "port": new_ss_port})
+                            if resp and resp.status_code == 200:
+                                logger.info(f"Node {node.name}: SS port changed to {new_ss_port}")
+                            else:
+                                logger.warning(f"Node {node.name}: failed to change port")
+                                node_errors += 1
+                except Exception as e:
+                    logger.error(f"Node {node.name}: port change error: {e}")
+                    node_errors += 1
         
-        # Regenerate all users' access URLs
+        # Regenerate all users' access URLs with the new port
         users = (await db.execute(
             select(VPNUser).where(VPNUser.assigned_node_id.isnot(None), VPNUser.ss_password.isnot(None))
         )).scalars().all()
-        updated = 0
         for user in users:
             node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
             if node:
                 user.access_url = await _build_user_ss_url_from_node(user, node, db)
                 updated += 1
-        logger.info(f"SS port changed to {new_ss_port}, updated {len(nodes)} nodes, regenerated {updated} user access URLs")
+        logger.info(f"SS port changed to {new_ss_port}, updated {len(nodes)} nodes, regenerated {updated} user URLs, {node_errors} node errors")
 
     db.add(AuditLog(admin_id=int(admin["sub"]), action='settings_updated',
                     details=f'Panel settings updated' + (f' — SS port changed to {new_ss_port}, {updated} URLs regenerated' if ss_port_changed else ''),
                     ip_address=request.client.host if request.client else None))
-    return {"message": "Settings updated" + (f", {updated} user URLs regenerated" if ss_port_changed else "")}
+    return {"message": "Settings updated" + (f", {updated} user URLs regenerated" + (f" ({node_errors} node errors)" if node_errors else "") if ss_port_changed else "")}
 
 
 # ===== Backup =====
@@ -1213,7 +1219,7 @@ async def check_all_nodes_health():
         await asyncio.sleep(300)
 
 async def license_heartbeat():
-    """Validate license every 6 hours. Suspend panel if invalid."""
+    """Validate license every 6 hours. Stop all nodes if license expired/invalid."""
     while True:
         try:
             async with async_session() as session:
@@ -1224,7 +1230,14 @@ async def license_heartbeat():
                     expire_date = lic.created_at + timedelta(days=lic.expire_days)
                     if lic.expire_days > 0 and datetime.now(timezone.utc) > expire_date:
                         lic.status = 'expired'
-                        logger.warning("License expired — panel suspended")
+                        logger.warning("License expired — stopping all nodes")
+                        # Stop ss-server on all online nodes
+                        nodes = (await session.execute(select(Node).where(Node.status == 'online'))).scalars().all()
+                        for node in nodes:
+                            try:
+                                await _node_connect_and_action(node, 'stop')
+                            except Exception:
+                                pass
                     elif lic.server_fingerprint and lic.server_fingerprint != get_server_fingerprint():
                         lic.status = 'suspended'
                         logger.warning("License fingerprint mismatch — panel suspended")
@@ -1249,31 +1262,30 @@ async def user_validation_task():
                     select(VPNUser).where(VPNUser.status == 'active', VPNUser.assigned_node_id.isnot(None))
                 )).scalars().all()
                 
+                disabled_count = 0
                 for user in users:
                     validation = await validate_user_access(user, session)
                     
                     if not validation["allowed"]:
-                        # Get user's node
                         node = (await session.execute(
                             select(Node).where(Node.id == user.assigned_node_id)
                         )).scalar_one_or_none()
                         
+                        reason = ", ".join(validation["errors"])
+                        user.status = 'disabled'
+                        session.add(AuditLog(
+                            admin_id=None,
+                            action='user_auto_disabled',
+                            details=f'User "{user.username}" automatically disabled: {reason}'
+                        ))
+                        disabled_count += 1
+                        
                         if node:
-                            # Try to deactivate on node
-                            success = await deactivate_user_on_node(user, node, ", ".join(validation["errors"]))
-                            
-                            if success:
-                                # Update user status in database
-                                user.status = 'disabled'
-                                await session.commit()
-                                
-                                # Log the action
-                                session.add(AuditLog(
-                                    admin_id=None,
-                                    action='user_auto_disabled',
-                                    details=f'User "{user.username}" automatically disabled: {", ".join(validation["errors"])}'
-                                ))
-                                await session.commit()
+                            await deactivate_user_on_node(user, node, session, reason)
+                
+                if disabled_count > 0:
+                    await session.commit()
+                    logger.info(f"User validation: disabled {disabled_count} users")
                                 
         except Exception as e:
             logger.error(f"User validation task error: {e}")
@@ -1323,7 +1335,6 @@ async def shutdown():
     await engine.dispose()
 
 app.include_router(api_router)
-app.add_middleware(LicenseMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
