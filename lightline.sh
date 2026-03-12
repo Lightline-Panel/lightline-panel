@@ -311,8 +311,11 @@ update_cmd() {
     colorize green "Repository updated"
 
     echo ""
-    colorize blue "Rebuilding containers..."
-    $COMPOSE build
+    colorize blue "Rebuilding containers (no cache)..."
+    # --no-cache ensures the frontend picks up all code changes (theme, i18n, etc.)
+    # We only stop backend/frontend — postgres and redis stay running to preserve data
+    $COMPOSE stop backend frontend 2>/dev/null || true
+    $COMPOSE build --no-cache backend frontend
     $COMPOSE up -d
     colorize green "Containers rebuilt and restarted"
 
@@ -332,6 +335,7 @@ update_cmd() {
 
     echo ""
     colorize green "Lightline VPN Panel updated successfully."
+    colorize green "Database and license preserved."
     echo ""
 }
 

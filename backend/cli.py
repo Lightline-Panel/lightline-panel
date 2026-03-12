@@ -169,6 +169,17 @@ async def cmd_activate_license(key: str = None):
             lic.activated_servers = 1
         await session.commit()
 
+    # Backup license to persistent file so it survives DB resets
+    try:
+        import json as _json
+        backup_path = Path('/var/lib/lightline/certs/license_backup.json')
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        _json.dump({"license_key": key, "server_fingerprint": fingerprint},
+                   open(backup_path, 'w'))
+        print(f"  [OK] License backed up to {backup_path}")
+    except Exception as e:
+        print(f"  [WARN] Could not backup license: {e}")
+
     print()
     print(f"  [OK] License activated on this server")
     print()

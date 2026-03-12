@@ -16,11 +16,6 @@ export default function Layout({ children }) {
   const { lang, setLang } = useI18n();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const toggleTheme = () => {
-    const isDark = document.documentElement.classList.toggle('dark');
-    localStorage.setItem('lightline_theme', isDark ? 'dark' : 'light');
-  };
-
   return (
     <div className="flex min-h-screen bg-[#050505] ll-grid-bg overflow-x-hidden">
       <Sidebar />
@@ -62,16 +57,6 @@ export default function Layout({ children }) {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleTheme}
-              className="text-gray-400 hover:text-white text-xs"
-              data-testid="theme-toggle"
-            >
-              Theme
-            </Button>
 
             {user && (
               <div className="hidden sm:flex items-center gap-2 pl-2 border-l border-white/10">

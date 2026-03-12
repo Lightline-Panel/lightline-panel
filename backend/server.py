@@ -141,6 +141,37 @@ class TOTPConfirmRequest(BaseModel):
     code: str
 
 
+# ===== License Persistence (survives container rebuilds) =====
+LICENSE_BACKUP_PATH = Path('/var/lib/lightline/certs/license_backup.json')
+
+
+def _save_license_to_file(license_key: str, server_fingerprint: str):
+    """Save license key to a persistent file so it survives DB resets."""
+    try:
+        LICENSE_BACKUP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        import json as _json
+        _json.dump({
+            "license_key": license_key,
+            "server_fingerprint": server_fingerprint,
+        }, open(LICENSE_BACKUP_PATH, 'w'))
+        logger.info(f"License backed up to {LICENSE_BACKUP_PATH}")
+    except Exception as e:
+        logger.error(f"Failed to backup license: {e}")
+
+
+def _load_license_from_file() -> dict | None:
+    """Load license key from persistent file."""
+    try:
+        if LICENSE_BACKUP_PATH.exists():
+            import json as _json
+            data = _json.load(open(LICENSE_BACKUP_PATH))
+            if data.get("license_key"):
+                return data
+    except Exception as e:
+        logger.error(f"Failed to load license backup: {e}")
+    return None
+
+
 # ===== Runtime Node Stats Cache =====
 # Stores latest stats from each node (polled every 60s by background task)
 # Key: node_id, Value: {"upload": int, "download": int, "connected_devices": int, "connected_ips": [...]}
@@ -453,20 +484,19 @@ async def _get_node_server_info(node) -> dict:
     return {}
 
 
-async def _build_user_ss_url_from_node(user, node, db) -> str:
+async def _build_user_ss_url_from_node(user, node, db, force_port: int = None) -> str:
     """Build a proper ss:// URL by fetching real config from the node.
     
-    Fetches the actual server password and port from the node's /server-info.
-    Falls back to node.ss_port (from DB) if node agent is unreachable.
+    Fetches the actual server password from the node's /server-info.
+    Port priority: force_port > node.ss_port (DB) > node /server-info > global settings.
+    This ensures port changes in the panel take effect immediately.
     """
     if not node:
         return ""
     info = await _get_node_server_info(node)
     password = info.get('password', '')
-    ss_port = info.get('port', 0)
-    if not ss_port:
-        # Fallback: use the node's own ss_port from DB, then panel settings
-        ss_port = node.ss_port or await _get_global_ss_port(db)
+    # Port: use force_port if given, then DB value, then node-reported, then global
+    ss_port = force_port or node.ss_port or info.get('port', 0) or await _get_global_ss_port(db)
     if not password:
         # Fallback: use user's stored password (legacy)
         password = user.ss_password or ''
@@ -976,6 +1006,10 @@ async def activate_license(req: LicenseActivate, request: Request, db: AsyncSess
     db.add(AuditLog(admin_id=None, action='license_activated',
                     details=f'License activated: {req.license_key[:16]}...',
                     ip_address=request.client.host if request.client else None))
+    
+    # Backup license to persistent file so it survives DB resets
+    _save_license_to_file(req.license_key, fingerprint)
+    
     return {"activated": True, "expires_in_days": info["expires_in_days"],
             "fingerprint": fingerprint}
 
@@ -1307,7 +1341,29 @@ async def startup():
         if admin_count == 0:
             logger.warning("No admin account found. Create one with: docker exec -it lightline-backend python cli.py admin create")
         if not lic:
-            logger.warning("No active license found. Panel will not be accessible without a license.")
+            # Try to restore license from persistent backup file
+            backup = _load_license_from_file()
+            if backup and backup.get("license_key"):
+                logger.info("Restoring license from backup file...")
+                info = verify_license_key(backup["license_key"])
+                if info and not info["expired"]:
+                    lic = License(
+                        license_key=backup["license_key"],
+                        expire_days=info["expire_days"],
+                        max_servers=info["max_servers"],
+                        activated_servers=1,
+                        status='active',
+                        server_fingerprint=backup.get("server_fingerprint") or get_server_fingerprint(),
+                    )
+                    session.add(lic)
+                    session.add(AuditLog(admin_id=None, action='license_restored',
+                                        details=f'License auto-restored from backup: {backup["license_key"][:16]}...'))
+                    await session.commit()
+                    logger.info("License restored successfully from backup")
+                else:
+                    logger.warning("Backup license is expired or invalid")
+            else:
+                logger.warning("No active license found. Panel will not be accessible without a license.")
         if node_count == 0:
             # Create default node using environment variables
             default_ip = os.environ.get('SERVER_IP', '127.0.0.1')
