@@ -852,6 +852,14 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
 async def create_user(req: UserCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     if not req.assigned_node_id:
         raise HTTPException(400, "A node must be selected")
+    # Validate expire_date is not in the past
+    expire_dt = None
+    if req.expire_date:
+        expire_dt = datetime.fromisoformat(req.expire_date)
+        if expire_dt.tzinfo is None:
+            expire_dt = expire_dt.replace(tzinfo=timezone.utc)
+        if expire_dt < datetime.now(timezone.utc):
+            raise HTTPException(400, "Expiry date cannot be in the past")
     existing = (await db.execute(select(VPNUser).where(VPNUser.username == req.username))).scalar_one_or_none()
     if existing:
         raise HTTPException(400, "Username already exists")
@@ -860,7 +868,7 @@ async def create_user(req: UserCreate, request: Request, admin=Depends(get_curre
     user = VPNUser(
         username=req.username,
         traffic_limit=req.traffic_limit or 0,
-        expire_date=datetime.fromisoformat(req.expire_date) if req.expire_date else None,
+        expire_date=expire_dt,
         assigned_node_id=req.assigned_node_id, status='active',
         ss_password=ss_password, access_token=token
     )
@@ -888,9 +896,28 @@ async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Dep
     if 'expire_date' in data and data['expire_date']:
         data['expire_date'] = datetime.fromisoformat(data['expire_date'])
     old_node_id = user.assigned_node_id
+    old_status = user.status
     node_changed = 'assigned_node_id' in data and data['assigned_node_id'] != old_node_id
     for k, v in data.items():
         setattr(user, k, v)
+    # Auto-reactivate: if user was disabled and expiry is extended to the future, re-enable
+    if old_status == 'disabled' and 'status' not in data:
+        should_reactivate = True
+        if user.expire_date and datetime.now(timezone.utc) > user.expire_date:
+            should_reactivate = False
+        if user.traffic_limit and user.traffic_limit > 0:
+            total_used = (await db.execute(
+                select(func.sum(TrafficLog.bytes_transferred)).where(TrafficLog.user_id == user.id)
+            )).scalar() or 0
+            if total_used >= user.traffic_limit:
+                should_reactivate = False
+        if should_reactivate:
+            user.status = 'active'
+            # Re-add user key to node
+            if user.assigned_node_id and user.ss_password:
+                node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+                if node:
+                    await _add_user_to_node(node, user.username, user.ss_password)
     # Regenerate ss:// URL if node changed or user has no ss_password yet
     if node_changed or (user.assigned_node_id and not user.ss_password):
         if not user.ss_password:
