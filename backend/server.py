@@ -900,24 +900,42 @@ async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Dep
     node_changed = 'assigned_node_id' in data and data['assigned_node_id'] != old_node_id
     for k, v in data.items():
         setattr(user, k, v)
-    # Auto-reactivate: if user was disabled and expiry is extended to the future, re-enable
-    if old_status == 'disabled' and 'status' not in data:
-        should_reactivate = True
-        if user.expire_date and datetime.now(timezone.utc) > user.expire_date:
-            should_reactivate = False
-        if user.traffic_limit and user.traffic_limit > 0:
-            total_used = (await db.execute(
-                select(func.sum(TrafficLog.bytes_transferred)).where(TrafficLog.user_id == user.id)
-            )).scalar() or 0
-            if total_used >= user.traffic_limit:
-                should_reactivate = False
-        if should_reactivate:
-            user.status = 'active'
-            # Re-add user key to node
-            if user.assigned_node_id and user.ss_password:
-                node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
-                if node:
-                    await _add_user_to_node(node, user.username, user.ss_password)
+    # Reactivation: handle both explicit status change and auto-reactivation
+    becoming_active = False
+    if old_status in ('disabled', 'expired'):
+        # Case 1: Admin explicitly sets status to 'active'
+        if data.get('status') == 'active':
+            becoming_active = True
+        # Case 2: Admin extends expire_date without touching status — auto-reactivate
+        elif 'status' not in data:
+            should_reactivate = True
+            if user.expire_date:
+                exp = user.expire_date
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) > exp:
+                    should_reactivate = False
+            if user.traffic_limit and user.traffic_limit > 0:
+                total_used = (await db.execute(
+                    select(func.sum(TrafficLog.bytes_transferred)).where(TrafficLog.user_id == user.id)
+                )).scalar() or 0
+                if total_used >= user.traffic_limit:
+                    should_reactivate = False
+            if should_reactivate:
+                user.status = 'active'
+                becoming_active = True
+    # Deactivation: admin explicitly disables an active user — remove key from node
+    becoming_disabled = old_status == 'active' and data.get('status') == 'disabled'
+    if becoming_disabled and user.assigned_node_id:
+        node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+        if node:
+            await _remove_user_from_node(node, user.username)
+    # Re-add user key to node when reactivating
+    if becoming_active and user.assigned_node_id and user.ss_password:
+        node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+        if node:
+            await _add_user_to_node(node, user.username, user.ss_password)
+            await ensure_server_running(node)
     # Regenerate ss:// URL if node changed or user has no ss_password yet
     if node_changed or (user.assigned_node_id and not user.ss_password):
         if not user.ss_password:

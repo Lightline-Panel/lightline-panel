@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy, Users, Smartphone } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy, Users, Smartphone, Power } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import QRCode from 'react-qr-code';
@@ -84,6 +84,15 @@ export default function UsersPage() {
   const handleDelete = async (u) => {
     if (!window.confirm(t('users.deleteConfirm'))) return;
     try { await api.delete(`/users/${u.id}`); toast.success('User deleted'); fetchData(); } catch (err) { toast.error('Error'); }
+  };
+
+  const handleToggleStatus = async (u) => {
+    const newStatus = u.status === 'active' ? 'disabled' : 'active';
+    try {
+      await api.put(`/users/${u.id}`, { status: newStatus });
+      toast.success(newStatus === 'active' ? 'User enabled' : 'User disabled');
+      fetchData();
+    } catch (err) { toast.error(err.response?.data?.detail || 'Error'); }
   };
 
   const handleSwitch = async () => {
@@ -234,6 +243,9 @@ export default function UsersPage() {
                               <Copy className="w-4 h-4" /> {t('users.copySubUrl')}
                             </DropdownMenuItem>
                           )}
+                          <DropdownMenuItem onClick={() => handleToggleStatus(u)} className={`gap-2 min-h-[44px] ${u.status === 'active' ? 'text-amber-400' : 'text-green-400'}`}>
+                            <Power className="w-3.5 h-3.5" /> {u.status === 'active' ? 'Disable' : 'Enable'}
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleDelete(u)} className="text-red-400 gap-2 min-h-[44px]">
                             <Trash2 className="w-3.5 h-3.5" /> {t('common.delete')}
                           </DropdownMenuItem>
@@ -307,6 +319,9 @@ export default function UsersPage() {
                           <Copy className="w-4 h-4" /> {t('users.copySubUrl')}
                         </DropdownMenuItem>
                       )}
+                      <DropdownMenuItem onClick={() => handleToggleStatus(u)} className={`gap-2 min-h-[44px] ${u.status === 'active' ? 'text-amber-400' : 'text-green-400'}`}>
+                        <Power className="w-3.5 h-3.5" /> {u.status === 'active' ? 'Disable' : 'Enable'}
+                      </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleDelete(u)} className="text-red-400 gap-2 min-h-[44px]">
                         <Trash2 className="w-3.5 h-3.5" /> {t('common.delete')}
                       </DropdownMenuItem>
