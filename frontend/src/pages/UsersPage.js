@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy, Users, Smartphone, Power } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy, Users, Smartphone, Power, Wifi, WifiOff, Clock, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import QRCode from 'react-qr-code';
@@ -21,6 +21,58 @@ const formatBytes = (b) => {
   const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(b) / Math.log(k));
   return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + s[i];
+};
+
+const statusConfig = {
+  active: { label: 'Active', color: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20', icon: Wifi },
+  expired: { label: 'Expired', color: 'bg-red-500/15 text-red-400 border-red-500/20', icon: Clock },
+  limited: { label: 'Limited', color: 'bg-amber-500/15 text-amber-400 border-amber-500/20', icon: AlertTriangle },
+  disabled: { label: 'Disabled', color: 'bg-gray-500/15 text-gray-400 border-gray-500/20', icon: WifiOff },
+};
+
+const getExpiryText = (u) => {
+  if (!u.expire_date) return null;
+  const now = new Date();
+  const exp = new Date(u.expire_date);
+  const diffMs = exp - now;
+  const diffMins = Math.floor(Math.abs(diffMs) / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffMs < 0) {
+    if (diffMins < 60) return `Expired ${diffMins}m ago`;
+    if (diffHours < 24) return `Expired ${diffHours}h ago`;
+    return `Expired ${diffDays}d ago`;
+  }
+  if (diffMins < 60) return `Expires in ${diffMins}m`;
+  if (diffHours < 24) return `Expires in ${diffHours}h`;
+  if (diffDays <= 7) return `Expires in ${diffDays}d`;
+  return `Expires in ${diffDays}d`;
+};
+
+const StatusBadge = ({ user }) => {
+  const ds = user.display_status || user.status;
+  const cfg = statusConfig[ds] || statusConfig.active;
+  const Icon = cfg.icon;
+  return (
+    <Badge className={`text-[10px] h-5 gap-1 border ${cfg.color}`}>
+      <Icon className="w-2.5 h-2.5" />{cfg.label}
+    </Badge>
+  );
+};
+
+const TrafficBar = ({ used, limit }) => {
+  if (!limit || limit <= 0) return <span className="font-mono text-xs text-gray-400">{formatBytes(used)}</span>;
+  const pct = Math.min(100, (used / limit) * 100);
+  const over = used >= limit;
+  return (
+    <div className="space-y-1">
+      <span className="font-mono text-xs text-gray-400">{formatBytes(used)} / {formatBytes(limit)}</span>
+      <div className="w-full h-1 rounded-full bg-white/5 overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${over ? 'bg-red-500' : pct > 80 ? 'bg-amber-500' : 'bg-cyan-500'}`}
+          style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
 };
 
 export default function UsersPage() {
@@ -165,13 +217,14 @@ export default function UsersPage() {
                   <TableRow key={u.id} className="border-white/5 hover:bg-white/[0.02]">
                     <TableCell className="text-gray-200 font-medium">{u.username}</TableCell>
                     <TableCell>
-                      <Badge variant={u.status === 'active' ? 'default' : 'destructive'} className="text-[10px] h-5">
-                        {u.status}
-                      </Badge>
+                      <div className="flex flex-col gap-1">
+                        <StatusBadge user={u} />
+                        {getExpiryText(u) && <span className={`text-[10px] ${u.display_status === 'expired' ? 'text-red-400' : 'text-gray-500'}`}>{getExpiryText(u)}</span>}
+                      </div>
                     </TableCell>
                     <TableCell className="text-gray-400 text-sm">{u.node_name || '—'}</TableCell>
-                    <TableCell className="font-mono text-xs text-gray-400">
-                      {formatBytes(u.traffic_used)}{u.traffic_limit > 0 && ` / ${formatBytes(u.traffic_limit)}`}
+                    <TableCell>
+                      <TrafficBar used={u.traffic_used} limit={u.traffic_limit} />
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5">
@@ -185,7 +238,7 @@ export default function UsersPage() {
                       )}
                     </TableCell>
                     <TableCell className="font-mono text-xs text-gray-500">
-                      {u.expire_date ? new Date(u.expire_date).toLocaleDateString('en-GB') : '—'}
+                      {u.expire_date ? new Date(u.expire_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' }) : '—'}
                     </TableCell>
                     <TableCell className="text-xs text-gray-500">
                       {u.last_connected_at ? (() => {
@@ -271,9 +324,7 @@ export default function UsersPage() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-gray-200 font-medium truncate">{u.username}</span>
-                    <Badge variant={u.status === 'active' ? 'default' : 'destructive'} className="text-[10px] h-5 shrink-0">
-                      {u.status}
-                    </Badge>
+                    <StatusBadge user={u} />
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -335,7 +386,7 @@ export default function UsersPage() {
                   </div>
                   <div>
                     <p className="text-gray-500 uppercase text-[10px]">{t('users.trafficUsed')}</p>
-                    <p className="text-gray-400 font-mono">{formatBytes(u.traffic_used)}</p>
+                    <TrafficBar used={u.traffic_used} limit={u.traffic_limit} />
                   </div>
                   <div>
                     <p className="text-gray-500 uppercase text-[10px]">{t('users.devices')}</p>
@@ -349,7 +400,9 @@ export default function UsersPage() {
                   </div>
                   <div>
                     <p className="text-gray-500 uppercase text-[10px]">{t('users.expires')}</p>
-                    <p className="text-gray-400 font-mono">{u.expire_date ? new Date(u.expire_date).toLocaleDateString('en-GB') : '—'}</p>
+                    <p className={`text-xs ${u.display_status === 'expired' ? 'text-red-400' : 'text-gray-400'}`}>
+                      {getExpiryText(u) || (u.expire_date ? new Date(u.expire_date).toLocaleDateString('en-GB') : '—')}
+                    </p>
                   </div>
                   <div className="col-span-2">
                     <p className="text-gray-500 uppercase text-[10px]">{t('users.lastConnected') || 'Last Connected'}</p>

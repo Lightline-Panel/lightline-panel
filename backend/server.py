@@ -186,9 +186,13 @@ async def validate_user_access(user: VPNUser, db: AsyncSession) -> dict:
     """Check if user is allowed to access VPN based on traffic limit and expiry."""
     errors = []
     
-    # Check expiry date
-    if user.expire_date and datetime.now(timezone.utc) > user.expire_date:
-        errors.append("User account has expired")
+    # Check expiry date (expire_date is stored as end-of-day 23:59:59 UTC)
+    if user.expire_date:
+        exp = user.expire_date
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > exp:
+            errors.append("User account has expired")
     
     # Check traffic limit (if set)
     if user.traffic_limit > 0:
@@ -824,6 +828,7 @@ async def _check_node_health(node) -> str:
 @api_router.get("/users")
 async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     users = (await db.execute(select(VPNUser).order_by(desc(VPNUser.created_at)))).scalars().all()
+    now = datetime.now(timezone.utc)
     result = []
     for u in users:
         traffic = (await db.execute(
@@ -834,13 +839,29 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
             node_name = (await db.execute(select(Node.name).where(Node.id == u.assigned_node_id))).scalar_one_or_none()
         sub_path = f"/api/sub/{u.access_token}" if u.access_token else None
         node_stats = _node_stats_cache.get(u.assigned_node_id, {}) if u.assigned_node_id else {}
+        # Compute display_status: expired > limited > disabled > active
+        display_status = u.status
+        is_expired = False
+        is_limited = False
+        if u.expire_date:
+            exp = u.expire_date if u.expire_date.tzinfo else u.expire_date.replace(tzinfo=timezone.utc)
+            if now > exp:
+                is_expired = True
+                display_status = 'expired'
+        if u.traffic_limit and u.traffic_limit > 0 and traffic >= u.traffic_limit:
+            is_limited = True
+            if not is_expired:
+                display_status = 'limited'
+        if u.status == 'disabled' and not is_expired and not is_limited:
+            display_status = 'disabled'
         result.append({
             "id": u.id, "username": u.username, "traffic_limit": u.traffic_limit,
             "expire_date": u.expire_date.isoformat() if u.expire_date else None,
             "assigned_node_id": u.assigned_node_id, "node_name": node_name,
             "access_url": u.access_url or u.ss_url,
             "sub_url": sub_path,
-            "status": u.status, "created_at": u.created_at.isoformat(),
+            "status": u.status, "display_status": display_status,
+            "created_at": u.created_at.isoformat(),
             "traffic_used": traffic,
             "online_devices": node_stats.get("connected_devices", 0),
             "connected_ips": node_stats.get("connected_ips", []),
@@ -852,12 +873,15 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
 async def create_user(req: UserCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     if not req.assigned_node_id:
         raise HTTPException(400, "A node must be selected")
-    # Validate expire_date is not in the past
+    # Validate expire_date is not in the past; set to end of day (23:59:59 UTC)
     expire_dt = None
     if req.expire_date:
         expire_dt = datetime.fromisoformat(req.expire_date)
         if expire_dt.tzinfo is None:
             expire_dt = expire_dt.replace(tzinfo=timezone.utc)
+        # Set to end of day so the user has the full day
+        if expire_dt.hour == 0 and expire_dt.minute == 0 and expire_dt.second == 0:
+            expire_dt = expire_dt.replace(hour=23, minute=59, second=59)
         if expire_dt < datetime.now(timezone.utc):
             raise HTTPException(400, "Expiry date cannot be in the past")
     existing = (await db.execute(select(VPNUser).where(VPNUser.username == req.username))).scalar_one_or_none()
@@ -894,7 +918,12 @@ async def update_user(user_id: int, req: UserUpdate, request: Request, admin=Dep
         raise HTTPException(404, "User not found")
     data = req.model_dump(exclude_none=True)
     if 'expire_date' in data and data['expire_date']:
-        data['expire_date'] = datetime.fromisoformat(data['expire_date'])
+        exp_dt = datetime.fromisoformat(data['expire_date'])
+        if exp_dt.tzinfo is None:
+            exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+        if exp_dt.hour == 0 and exp_dt.minute == 0 and exp_dt.second == 0:
+            exp_dt = exp_dt.replace(hour=23, minute=59, second=59)
+        data['expire_date'] = exp_dt
     old_node_id = user.assigned_node_id
     old_status = user.status
     node_changed = 'assigned_node_id' in data and data['assigned_node_id'] != old_node_id
@@ -1198,11 +1227,11 @@ async def get_subscription(access_token: str, db: AsyncSession = Depends(get_db)
     # Check user expiry and traffic inline
     if user.expire_date and datetime.now(timezone.utc) > user.expire_date:
         raise HTTPException(403, "Account expired")
+    total_used = (await db.execute(
+        select(func.coalesce(func.sum(TrafficLog.bytes_transferred), 0)).where(TrafficLog.user_id == user.id)
+    )).scalar()
     if user.traffic_limit and user.traffic_limit > 0:
-        total_used = (await db.execute(
-            select(func.coalesce(func.sum(TrafficLog.bytes_transferred), 0)).where(TrafficLog.user_id == user.id)
-        )).scalar()
-        if total_used >= user.traffic_limit:  # traffic_limit already in bytes
+        if total_used >= user.traffic_limit:
             raise HTTPException(403, "Traffic limit exceeded")
     # Build ss:// URL dynamically so port/password changes take effect immediately
     # without needing to regenerate or redistribute subscription URLs
@@ -1211,9 +1240,31 @@ async def get_subscription(access_token: str, db: AsyncSession = Depends(get_db)
     node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
     if not node:
         raise HTTPException(404, "Server not found")
-    ss_url = await _build_user_ss_url_from_node(user, node, db)
-    if not ss_url:
+    # Build informative tag for Outline app: "username | 5.2GB left | 12d left"
+    tag_parts = [user.username]
+    if user.traffic_limit and user.traffic_limit > 0:
+        remaining_bytes = max(0, user.traffic_limit - total_used)
+        if remaining_bytes >= 1_000_000_000:
+            tag_parts.append(f"{remaining_bytes / 1_000_000_000:.1f}GB left")
+        else:
+            tag_parts.append(f"{remaining_bytes / 1_000_000:.0f}MB left")
+    if user.expire_date:
+        exp = user.expire_date
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        days_left = (exp - datetime.now(timezone.utc)).days
+        if days_left > 0:
+            tag_parts.append(f"{days_left}d left")
+        elif days_left == 0:
+            tag_parts.append("expires today")
+    tag = " | ".join(tag_parts)
+    info = await _get_node_server_info(node)
+    node_reported_port = info.get('port', 0)
+    ss_port = node_reported_port or node.ss_port or await _get_global_ss_port(db)
+    password = user.ss_password or ''
+    if not password:
         raise HTTPException(404, "No access URL configured")
+    ss_url = build_ss_url(password=password, host=node.ip, port=ss_port, tag=tag)
     if '?' not in ss_url:
         ss_url += '/?outline=1'
     return PlainTextResponse(ss_url, media_type="text/plain")
