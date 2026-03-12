@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useI18n } from '@/contexts/I18nContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
