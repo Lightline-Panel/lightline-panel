@@ -164,44 +164,44 @@ export default function UsersPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="bg-zinc-950 border-white/10">
-                          <DropdownMenuItem onClick={() => openEdit(u)} className="text-gray-300 gap-2">
+                          <DropdownMenuItem onClick={() => openEdit(u)} className="text-gray-300 gap-2 min-h-[44px]">
                             <Pencil className="w-3.5 h-3.5" /> {t('common.edit')}
                           </DropdownMenuItem>
                           {u.access_url && (
-                            <DropdownMenuItem onClick={() => setQrUser(u)} className="text-gray-300 gap-2">
+                            <DropdownMenuItem onClick={() => setQrUser(u)} className="text-gray-300 gap-2 min-h-[44px]">
                               <QrCode className="w-3.5 h-3.5" /> {t('users.qrCode')}
                             </DropdownMenuItem>
                           )}
-                          <DropdownMenuItem onClick={() => { setSwitchUser(u); setSwitchNodeId(''); }} className="text-gray-300 gap-2">
+                          <DropdownMenuItem onClick={() => { setSwitchUser(u); setSwitchNodeId(''); }} className="text-gray-300 gap-2 min-h-[44px]">
                             <ArrowLeftRight className="w-3.5 h-3.5" /> {t('users.switchNode')}
                           </DropdownMenuItem>
                           {u.access_url && (
                             <DropdownMenuItem
-                              onClick={() => {
-                                copyToClipboard(u.access_url).then(ok => {
-                                  if (ok) toast.success('SS URL copied');
-                                  else toast.error('Copy failed');
-                                });
+                              onSelect={async (e) => {
+                                e.preventDefault();
+                                const ok = await copyToClipboard(u.access_url);
+                                if (ok) toast.success('SS URL copied');
+                                else toast.error('Copy failed');
                               }}
-                              className="text-gray-300 gap-2"
+                              className="text-gray-300 gap-2 min-h-[44px]"
                             >
-                              <Copy className="w-3.5 h-3.5" /> Copy SS URL
+                              <Copy className="w-4 h-4" /> Copy SS URL
                             </DropdownMenuItem>
                           )}
                           {u.sub_url && (
                             <DropdownMenuItem
-                              onClick={() => {
-                                copyToClipboard(`ssconf://${window.location.host}${u.sub_url}`).then(ok => {
-                                  if (ok) toast.success('Sub URL copied');
-                                  else toast.error('Copy failed');
-                                });
+                              onSelect={async (e) => {
+                                e.preventDefault();
+                                const ok = await copyToClipboard(`ssconf://${window.location.host}${u.sub_url}`);
+                                if (ok) toast.success('Sub URL copied');
+                                else toast.error('Copy failed');
                               }}
-                              className="text-gray-300 gap-2"
+                              className="text-gray-300 gap-2 min-h-[44px]"
                             >
-                              <Copy className="w-3.5 h-3.5" /> Copy Sub URL
+                              <Copy className="w-4 h-4" /> Copy Sub URL
                             </DropdownMenuItem>
                           )}
-                          <DropdownMenuItem onClick={() => handleDelete(u)} className="text-red-400 gap-2">
+                          <DropdownMenuItem onClick={() => handleDelete(u)} className="text-red-400 gap-2 min-h-[44px]">
                             <Trash2 className="w-3.5 h-3.5" /> {t('common.delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
@@ -267,13 +267,29 @@ export default function UsersPage() {
               <p className="text-[10px] text-gray-500 uppercase tracking-wider text-center">Shadowsocks Access Key</p>
               <p className="font-mono text-[10px] text-cyan-400 text-center break-all max-w-full bg-black/50 rounded-lg p-2 border border-white/5">{qrUser?.access_url}</p>
             </div>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => { copyToClipboard(qrUser?.access_url || '').then(ok => ok ? toast.success('SS URL copied') : toast.error('Copy failed')); }} className="text-cyan-400 gap-2">
-                <Copy className="w-3.5 h-3.5" /> Copy SS URL
+            <div className="flex flex-col sm:flex-row gap-2 w-full px-2">
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const ok = await copyToClipboard(qrUser?.access_url || '');
+                  if (ok) toast.success('SS URL copied');
+                  else toast.error('Copy failed — long-press the URL above to copy manually');
+                }}
+                className="text-cyan-400 border-cyan-400/20 gap-2 min-h-[48px] flex-1 active:scale-95 transition-transform touch-manipulation"
+              >
+                <Copy className="w-4 h-4" /> Copy SS URL
               </Button>
               {qrUser?.sub_url && (
-                <Button variant="ghost" size="sm" onClick={() => { copyToClipboard(`ssconf://${window.location.host}${qrUser.sub_url}`).then(ok => ok ? toast.success('Sub URL copied') : toast.error('Copy failed')); }} className="text-emerald-400 gap-2">
-                  <Copy className="w-3.5 h-3.5" /> Copy Sub URL
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    const ok = await copyToClipboard(`ssconf://${window.location.host}${qrUser.sub_url}`);
+                    if (ok) toast.success('Sub URL copied');
+                    else toast.error('Copy failed — long-press the URL above to copy manually');
+                  }}
+                  className="text-emerald-400 border-emerald-400/20 gap-2 min-h-[48px] flex-1 active:scale-95 transition-transform touch-manipulation"
+                >
+                  <Copy className="w-4 h-4" /> Copy Sub URL
                 </Button>
               )}
             </div>

@@ -62,14 +62,17 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      PANEL_DOMAIN: ${PANEL_DOMAIN:-}
     ports:
       - "80:80"
       - "443:443"
     volumes:
       # Mount certbot SSL certs for HTTPS (like Marzban)
-      # Run: certbot certonly --standalone -d YOUR_DOMAIN
-      # Then set SSL_CERT_DIR=/etc/letsencrypt/live/YOUR_DOMAIN in .env
-      - ${SSL_CERT_DIR:-./ssl}:/etc/nginx/ssl:ro
+      # 1. Run: certbot certonly --standalone -d YOUR_DOMAIN
+      # 2. Set PANEL_DOMAIN=YOUR_DOMAIN in .env
+      # Mounts entire /etc/letsencrypt because live/ contains symlinks to archive/
+      - /etc/letsencrypt:/etc/letsencrypt:ro
 
 volumes:
   pgdata:

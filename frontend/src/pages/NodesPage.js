@@ -161,16 +161,16 @@ export default function NodesPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="bg-zinc-950 border-white/10 text-gray-200">
-                        <DropdownMenuItem onClick={() => openEdit(node)} className="text-gray-300 gap-2">
+                        <DropdownMenuItem onClick={() => openEdit(node)} className="text-gray-300 gap-2 min-h-[44px]">
                           <Pencil className="w-3.5 h-3.5" /> {t('common.edit')}
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={showCertificate} className="text-gray-300 gap-2">
+                        <DropdownMenuItem onClick={showCertificate} className="text-gray-300 gap-2 min-h-[44px]">
                           <ShieldCheck className="w-3.5 h-3.5" /> Show Certificate
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => healthCheck(node.id)} className="text-gray-300 gap-2">
+                        <DropdownMenuItem onClick={() => healthCheck(node.id)} className="text-gray-300 gap-2 min-h-[44px]">
                           <RefreshCw className="w-3.5 h-3.5" /> Reconnect
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleDelete(node)} className="text-red-400 gap-2">
+                        <DropdownMenuItem onClick={() => handleDelete(node)} className="text-red-400 gap-2 min-h-[44px]">
                           <Trash2 className="w-3.5 h-3.5" /> {t('common.delete')}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -273,13 +273,12 @@ export default function NodesPage() {
               </p>
             </div>
             <Button
-              onClick={() => {
-                copyToClipboard(certificate).then(ok => {
-                  if (ok) toast.success('Certificate copied');
-                  else toast.error('Copy failed');
-                });
+              onClick={async () => {
+                const ok = await copyToClipboard(certificate);
+                if (ok) toast.success('Certificate copied');
+                else toast.error('Copy failed — long-press the text above to copy manually');
               }}
-              className="w-full bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2"
+              className="w-full bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 min-h-[48px] active:scale-95 transition-transform touch-manipulation"
             >
               <Copy className="w-4 h-4" /> Copy Certificate
             </Button>

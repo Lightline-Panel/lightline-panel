@@ -100,9 +100,9 @@ export default function LicensePage() {
                       <div className="flex items-center gap-2">
                         <Key className="w-3.5 h-3.5 text-cyan-400" />
                         <span className="font-mono text-xs text-gray-300">{lic.license_key}</span>
-                        <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-500"
-                          onClick={() => { copyToClipboard(lic.license_key).then(ok => ok ? toast.success('Copied') : toast.error('Copy failed')); }}>
-                          <Copy className="w-3 h-3" />
+                        <Button variant="ghost" size="icon" className="h-8 w-8 min-w-[32px] text-gray-500 touch-manipulation"
+                          onClick={async () => { const ok = await copyToClipboard(lic.license_key); ok ? toast.success('Copied') : toast.error('Copy failed'); }}>
+                          <Copy className="w-3.5 h-3.5" />
                         </Button>
                       </div>
                     </TableCell>
