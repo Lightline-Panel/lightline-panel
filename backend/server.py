@@ -539,10 +539,10 @@ async def _node_request(node, method: str, path: str, **kwargs) -> httpx.Respons
 
 
 async def _get_node_server_info(node) -> dict:
-    """Fetch server password, port, and method from the node agent.
+    """Fetch port and method from the node agent.
     
-    In single-password mode (Outline model), all users share one server password.
-    Returns dict with 'password', 'port', 'method' keys.
+    Multi-user mode: each user has their own password on outline-ss-server.
+    Returns dict with 'port', 'method' keys.
     Falls back to panel defaults if the node API is unreachable.
     """
     resp = await _node_request(node, 'GET', '/server-info')
