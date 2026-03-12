@@ -809,13 +809,16 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
             node_name = (await db.execute(select(Node.name).where(Node.id == u.assigned_node_id))).scalar_one_or_none()
         sub_path = f"/api/sub/{u.access_token}" if u.access_token else None
         node_stats = _node_stats_cache.get(u.assigned_node_id, {}) if u.assigned_node_id else {}
+        # Live cumulative traffic from node (upload+download) — shown when TrafficLog is empty
+        live_traffic = node_stats.get("upload", 0) + node_stats.get("download", 0)
         result.append({
             "id": u.id, "username": u.username, "traffic_limit": u.traffic_limit,
             "expire_date": u.expire_date.isoformat() if u.expire_date else None,
             "assigned_node_id": u.assigned_node_id, "node_name": node_name,
             "access_url": u.access_url or u.ss_url,
             "sub_url": sub_path,
-            "status": u.status, "created_at": u.created_at.isoformat(), "traffic_used": traffic,
+            "status": u.status, "created_at": u.created_at.isoformat(),
+            "traffic_used": traffic if traffic > 0 else live_traffic,
             "online_devices": node_stats.get("connected_devices", 0),
             "connected_ips": node_stats.get("connected_ips", []),
             "last_connected_at": u.last_connected_at.isoformat() if u.last_connected_at else None,
@@ -1273,11 +1276,12 @@ async def collect_node_stats():
                         }
                         
                         # Compute delta since last poll
+                        have_baseline = node.id in _node_last_bytes
                         last = _node_last_bytes.get(node.id, 0)
                         delta = total_bytes - last if total_bytes > last else 0
                         _node_last_bytes[node.id] = total_bytes
                         
-                        if delta > 0 and last > 0:
+                        if delta > 0 and have_baseline:
                             # Distribute delta across active users on this node
                             active_users = (await session.execute(
                                 select(VPNUser).where(
