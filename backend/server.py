@@ -138,6 +138,14 @@ class TOTPConfirmRequest(BaseModel):
     code: str
 
 
+# ===== Runtime Node Stats Cache =====
+# Stores latest stats from each node (polled every 60s by background task)
+# Key: node_id, Value: {"upload": int, "download": int, "connected_devices": int, "connected_ips": [...]}
+_node_stats_cache: dict = {}
+# Tracks last-known cumulative bytes per node so we can compute deltas for TrafficLog
+_node_last_bytes: dict = {}
+
+
 # ===== Auth Routes =====
 
 @api_router.get("/")
@@ -393,10 +401,18 @@ async def get_dashboard(admin=Depends(get_current_admin), db: AsyncSession = Dep
     logs = (await db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)).limit(10))).scalars().all()
     nodes = (await db.execute(select(Node).order_by(Node.name))).scalars().all()
 
+    # Sum connected devices across all online nodes
+    total_devices = sum(s.get("connected_devices", 0) for s in _node_stats_cache.values())
+    all_ips = []
+    for s in _node_stats_cache.values():
+        all_ips.extend(s.get("connected_ips", []))
+
     result = {
         "nodes": {"total": nodes_total, "online": nodes_online, "offline": nodes_total - nodes_online},
         "users": {"total": users_total, "active": users_active},
         "traffic": {"today": traffic_today, "total": traffic_total},
+        "connected_devices": total_devices,
+        "connected_ips": list(set(all_ips)),
         "license": {
             "active": lic is not None,
             "key": lic.license_key[:12] + "..." if lic else None,
@@ -426,12 +442,17 @@ async def get_nodes(admin=Depends(get_current_admin), db: AsyncSession = Depends
     result = []
     for n in nodes:
         uc = (await db.execute(select(func.count(VPNUser.id)).where(VPNUser.assigned_node_id == n.id))).scalar()
+        stats = _node_stats_cache.get(n.id, {})
         result.append({
             "id": n.id, "name": n.name, "ip": n.ip,
             "port": n.api_port or 62050,
             "country": n.country, "status": n.status,
             "last_heartbeat": n.last_heartbeat.isoformat() if n.last_heartbeat else None,
-            "created_at": n.created_at.isoformat(), "user_count": uc
+            "created_at": n.created_at.isoformat(), "user_count": uc,
+            "connected_devices": stats.get("connected_devices", 0),
+            "connected_ips": stats.get("connected_ips", []),
+            "traffic_upload": stats.get("upload", 0),
+            "traffic_download": stats.get("download", 0),
         })
     return result
 
@@ -607,13 +628,16 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
         if u.assigned_node_id:
             node_name = (await db.execute(select(Node.name).where(Node.id == u.assigned_node_id))).scalar_one_or_none()
         sub_path = f"/api/sub/{u.access_token}" if u.access_token else None
+        node_stats = _node_stats_cache.get(u.assigned_node_id, {}) if u.assigned_node_id else {}
         result.append({
             "id": u.id, "username": u.username, "traffic_limit": u.traffic_limit,
             "expire_date": u.expire_date.isoformat() if u.expire_date else None,
             "assigned_node_id": u.assigned_node_id, "node_name": node_name,
             "access_url": u.access_url or u.ss_url,
             "sub_url": sub_path,
-            "status": u.status, "created_at": u.created_at.isoformat(), "traffic_used": traffic
+            "status": u.status, "created_at": u.created_at.isoformat(), "traffic_used": traffic,
+            "online_devices": node_stats.get("connected_devices", 0),
+            "connected_ips": node_stats.get("connected_ips", []),
         })
     return result
 
@@ -947,6 +971,79 @@ async def create_backup(request: Request, admin=Depends(get_current_admin), db: 
 
 # ===== Background Tasks =====
 
+async def collect_node_stats():
+    """Poll /stats from each online node every 60s.
+    
+    - Stores connected devices/IPs in _node_stats_cache for API responses.
+    - Computes traffic deltas and writes to TrafficLog (distributed across
+      active users on each node, since single-password mode can't distinguish users).
+    """
+    while True:
+        try:
+            async with async_session() as session:
+                nodes = (await session.execute(select(Node))).scalars().all()
+                for node in nodes:
+                    if node.status != 'online':
+                        continue
+                    try:
+                        resp = await _node_request(node, 'GET', '/stats')
+                        if not resp or resp.status_code != 200:
+                            continue
+                        data = resp.json()
+                        upload = data.get('upload', 0)
+                        download = data.get('download', 0)
+                        total_bytes = upload + download
+                        
+                        # Store in runtime cache for API responses
+                        _node_stats_cache[node.id] = {
+                            "upload": upload,
+                            "download": download,
+                            "connected_devices": data.get('connected_devices', 0),
+                            "connected_ips": data.get('connected_ips', []),
+                        }
+                        
+                        # Compute delta since last poll
+                        last = _node_last_bytes.get(node.id, 0)
+                        delta = total_bytes - last if total_bytes > last else 0
+                        _node_last_bytes[node.id] = total_bytes
+                        
+                        if delta > 0 and last > 0:
+                            # Distribute delta across active users on this node
+                            active_users = (await session.execute(
+                                select(VPNUser).where(
+                                    VPNUser.assigned_node_id == node.id,
+                                    VPNUser.status == 'active'
+                                )
+                            )).scalars().all()
+                            
+                            if active_users:
+                                per_user = delta // len(active_users)
+                                remainder = delta % len(active_users)
+                                for i, user in enumerate(active_users):
+                                    user_bytes = per_user + (1 if i < remainder else 0)
+                                    if user_bytes > 0:
+                                        session.add(TrafficLog(
+                                            user_id=user.id,
+                                            node_id=node.id,
+                                            bytes_transferred=user_bytes,
+                                        ))
+                            else:
+                                # No active users — log traffic to node only
+                                session.add(TrafficLog(
+                                    user_id=None,
+                                    node_id=node.id,
+                                    bytes_transferred=delta,
+                                ))
+                        
+                        logger.debug(f"Node {node.name} stats: up={upload}, down={download}, devices={data.get('connected_devices', 0)}, delta={delta}")
+                    except Exception as e:
+                        logger.debug(f"Failed to collect stats from {node.name}: {e}")
+                await session.commit()
+        except Exception as e:
+            logger.error(f"Stats collection error: {e}")
+        await asyncio.sleep(60)
+
+
 async def check_all_nodes_health():
     while True:
         try:
@@ -1026,6 +1123,7 @@ async def startup():
             await session.commit()
             logger.info(f"Global SS port setting initialized: {os.environ.get('SS_PORT', '8388')}")
     asyncio.create_task(check_all_nodes_health())
+    asyncio.create_task(collect_node_stats())
     asyncio.create_task(license_heartbeat())
     logger.info("Lightline VPN Panel started")
 

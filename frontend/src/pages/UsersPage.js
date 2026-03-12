@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy, Users } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy, Users, Smartphone } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import QRCode from 'react-qr-code';
@@ -135,15 +135,16 @@ export default function UsersPage() {
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('common.status')}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.assignedNode')}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.trafficUsed')}</TableHead>
+                  <TableHead className="text-gray-500 text-xs uppercase tracking-wider">Devices</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.expireDate')}</TableHead>
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider text-right">{t('common.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={6} className="text-center py-12"><Loader2 className="w-5 h-5 animate-spin mx-auto text-gray-500" /></TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="text-center py-12"><Loader2 className="w-5 h-5 animate-spin mx-auto text-gray-500" /></TableCell></TableRow>
                 ) : filtered.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} className="text-center py-12 text-gray-500">{t('common.noData')}</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="text-center py-12 text-gray-500">{t('common.noData')}</TableCell></TableRow>
                 ) : filtered.map((u) => (
                   <TableRow key={u.id} className="border-white/5 hover:bg-white/[0.02]">
                     <TableCell className="text-gray-200 font-medium">{u.username}</TableCell>
@@ -155,6 +156,17 @@ export default function UsersPage() {
                     <TableCell className="text-gray-400 text-sm">{u.node_name || '—'}</TableCell>
                     <TableCell className="font-mono text-xs text-gray-400">
                       {formatBytes(u.traffic_used)}{u.traffic_limit > 0 && ` / ${formatBytes(u.traffic_limit)}`}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1.5">
+                        <Smartphone className="w-3.5 h-3.5 text-gray-500" />
+                        <span className="text-xs text-gray-400">{u.online_devices || 0}</span>
+                      </div>
+                      {u.connected_ips?.length > 0 && (
+                        <p className="text-[10px] text-gray-600 font-mono mt-0.5 truncate max-w-[120px]" title={u.connected_ips.join(', ')}>
+                          {u.connected_ips.join(', ')}
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell className="font-mono text-xs text-gray-500">
                       {u.expire_date ? new Date(u.expire_date).toLocaleDateString() : '—'}
@@ -283,7 +295,7 @@ export default function UsersPage() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
                     <p className="text-gray-500 uppercase text-[10px]">Node</p>
                     <p className="text-gray-400 truncate">{u.node_name || '—'}</p>
@@ -291,6 +303,16 @@ export default function UsersPage() {
                   <div>
                     <p className="text-gray-500 uppercase text-[10px]">Traffic</p>
                     <p className="text-gray-400 font-mono">{formatBytes(u.traffic_used)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 uppercase text-[10px]">Devices</p>
+                    <div className="flex items-center gap-1">
+                      <Smartphone className="w-3 h-3 text-gray-500" />
+                      <p className="text-gray-400">{u.online_devices || 0}</p>
+                    </div>
+                    {u.connected_ips?.length > 0 && (
+                      <p className="text-[10px] text-gray-600 font-mono truncate">{u.connected_ips.join(', ')}</p>
+                    )}
                   </div>
                   <div>
                     <p className="text-gray-500 uppercase text-[10px]">Expires</p>

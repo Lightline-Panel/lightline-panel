@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useI18n } from '@/contexts/I18nContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Server, Users, Activity, Key, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Server, Users, Activity, Key, ArrowUpRight, ArrowDownRight, Smartphone } from 'lucide-react';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
 
@@ -63,7 +63,7 @@ export default function DashboardPage() {
         <p className="text-sm text-gray-500 mt-1">Lightline VPN Panel Overview</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-6">
         <StatCard icon={Server} label={t('dashboard.totalNodes')} value={data.nodes.total}
           sub={`${data.nodes.online} ${t('common.online')} / ${data.nodes.offline} ${t('common.offline')}`}
           color="bg-cyan-500/10 text-cyan-400" delay={0} />
@@ -73,9 +73,12 @@ export default function DashboardPage() {
         <StatCard icon={Activity} label={t('dashboard.trafficToday')} value={formatBytes(data.traffic.today)}
           sub={`${t('dashboard.trafficTotal')}: ${formatBytes(data.traffic.total)}`}
           color="bg-emerald-500/10 text-emerald-400" delay={0.2} />
+        <StatCard icon={Smartphone} label="Connected Devices" value={data.connected_devices || 0}
+          sub={data.connected_ips?.length ? `${data.connected_ips.length} unique IPs` : 'No connections'}
+          color="bg-purple-500/10 text-purple-400" delay={0.3} />
         <StatCard icon={Key} label={t('dashboard.licenseStatus')} value={data.license.active ? t('common.active') : 'N/A'}
           sub={data.license.key || 'No license'}
-          color="bg-amber-500/10 text-amber-400" delay={0.3} />
+          color="bg-amber-500/10 text-amber-400" delay={0.4} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">

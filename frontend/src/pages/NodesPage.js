@@ -7,11 +7,18 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, RefreshCw, Loader2, Copy, Wifi, WifiOff, ShieldCheck } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, RefreshCw, Loader2, Copy, Wifi, WifiOff, ShieldCheck, Smartphone, ArrowUpDown } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
 import { copyToClipboard } from '@/lib/clipboard';
+
+const formatBytes = (b) => {
+  if (!b) return '0 B';
+  const k = 1024, s = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(b) / Math.log(k));
+  return parseFloat((b / Math.pow(k, i)).toFixed(1)) + ' ' + s[i];
+};
 
 export default function NodesPage() {
   const [nodes, setNodes] = useState([]);
@@ -179,7 +186,7 @@ export default function NodesPage() {
                     </DropdownMenu>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 pt-1">
+                  <div className="grid grid-cols-2 gap-2 pt-1">
                     <div>
                       <p className="text-[10px] text-gray-500 uppercase">Status</p>
                       <Badge variant={node.status === 'online' ? 'default' : 'destructive'} className="text-[10px] h-5 mt-0.5">
@@ -194,9 +201,22 @@ export default function NodesPage() {
                       <p className="text-[10px] text-gray-500 uppercase">{t('nodes.userCount')}</p>
                       <p className="text-xs text-gray-300 mt-0.5">{node.user_count}</p>
                     </div>
+                    <div>
+                      <p className="text-[10px] text-gray-500 uppercase">Devices</p>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <Smartphone className="w-3 h-3 text-gray-500" />
+                        <p className="text-xs text-gray-300">{node.connected_devices || 0}</p>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                    <div className="flex items-center gap-1.5">
+                      <ArrowUpDown className="w-3 h-3 text-gray-600" />
+                      <p className="text-[10px] text-gray-600">
+                        {formatBytes((node.traffic_upload || 0) + (node.traffic_download || 0))}
+                      </p>
+                    </div>
                     <p className="text-[10px] text-gray-600">
                       Port: {node.port || 62050} · {node.last_heartbeat ? new Date(node.last_heartbeat).toLocaleString() : 'No heartbeat'}
                     </p>
