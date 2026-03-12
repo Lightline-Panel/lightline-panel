@@ -487,16 +487,18 @@ async def _get_node_server_info(node) -> dict:
 async def _build_user_ss_url_from_node(user, node, db, force_port: int = None) -> str:
     """Build a proper ss:// URL by fetching real config from the node.
     
-    Fetches the actual server password from the node's /server-info.
-    Port priority: force_port > node.ss_port (DB) > node /server-info > global settings.
-    This ensures port changes in the panel take effect immediately.
+    Fetches the actual server password and port from the node's /server-info.
+    Port priority: force_port > node /server-info (actual running port) > node.ss_port (DB) > global settings.
+    The node-reported port is the ACTUAL port ss-server is listening on.
     """
     if not node:
         return ""
     info = await _get_node_server_info(node)
     password = info.get('password', '')
-    # Port: use force_port if given, then DB value, then node-reported, then global
-    ss_port = force_port or node.ss_port or info.get('port', 0) or await _get_global_ss_port(db)
+    # Port: the node's /server-info returns the ACTUAL running port
+    # This is the most reliable source — it's what ss-server is actually bound to
+    node_reported_port = info.get('port', 0)
+    ss_port = force_port or node_reported_port or node.ss_port or await _get_global_ss_port(db)
     if not password:
         # Fallback: use user's stored password (legacy)
         password = user.ss_password or ''
@@ -1029,10 +1031,17 @@ async def get_subscription(access_token: str, db: AsyncSession = Depends(get_db)
     
     The Outline client fetches this URL and reads the ss:// link to connect.
     """
-    # Block subscription if license expired
+    # Block subscription if license expired or missing — check in real-time
     lic = (await db.execute(select(License).where(License.status == 'active').limit(1))).scalar_one_or_none()
     if not lic:
         raise HTTPException(403, "Service unavailable")
+    # Real-time expiry check (don't wait for background heartbeat)
+    if lic.expire_days > 0:
+        expire_date = lic.created_at + timedelta(days=lic.expire_days)
+        if datetime.now(timezone.utc) > expire_date:
+            lic.status = 'expired'
+            await db.commit()
+            raise HTTPException(403, "Service unavailable")
     user = (await db.execute(select(VPNUser).where(VPNUser.access_token == access_token))).scalar_one_or_none()
     if not user:
         raise HTTPException(404, "Not found")
@@ -1088,59 +1097,86 @@ async def get_settings(admin=Depends(get_current_admin), db: AsyncSession = Depe
 async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     ss_port_changed = False
     new_ss_port = None
-    for key, value in req.settings.items():
-        existing = (await db.execute(select(PanelSettings).where(PanelSettings.key == key))).scalar_one_or_none()
-        if existing:
-            if key == 'ss_port' and existing.value != str(value):
-                ss_port_changed = True
-                new_ss_port = int(value)
-            existing.value = str(value)
-        else:
-            db.add(PanelSettings(key=key, value=str(value)))
-            if key == 'ss_port':
-                ss_port_changed = True
-                new_ss_port = int(value)
+    old_ss_port = None
 
-    # When SS port changes, tell each node to change port + restart, then regenerate URLs
-    updated = 0
+    # First pass: detect port change but DON'T write it yet
+    for key, value in req.settings.items():
+        if key == 'ss_port':
+            existing = (await db.execute(select(PanelSettings).where(PanelSettings.key == key))).scalar_one_or_none()
+            old_ss_port_str = existing.value if existing else None
+            if old_ss_port_str != str(value):
+                ss_port_changed = True
+                new_ss_port = int(value)
+                old_ss_port = int(old_ss_port_str) if old_ss_port_str else 8388
+
+    # If port is changing, tell nodes FIRST — only update DB if at least one node succeeds
+    node_ok = 0
     node_errors = 0
+    error_details = []
     if ss_port_changed and new_ss_port:
         nodes = (await db.execute(select(Node))).scalars().all()
         for node in nodes:
-            node.ss_port = new_ss_port
-            # Tell the actual node to change its SS port and restart ss-server
-            if node.status == 'online':
-                try:
-                    connect_resp = await _node_request(node, 'POST', '/connect')
-                    if connect_resp and connect_resp.status_code == 200:
-                        sid = connect_resp.json().get('session_id')
-                        if sid:
-                            resp = await _node_request(node, 'POST', '/config/port',
-                                                       json={"session_id": sid, "port": new_ss_port})
-                            if resp and resp.status_code == 200:
-                                logger.info(f"Node {node.name}: SS port changed to {new_ss_port}")
-                            else:
-                                logger.warning(f"Node {node.name}: failed to change port")
-                                node_errors += 1
-                except Exception as e:
-                    logger.error(f"Node {node.name}: port change error: {e}")
+            try:
+                connect_resp = await _node_request(node, 'POST', '/connect')
+                if connect_resp and connect_resp.status_code == 200:
+                    sid = connect_resp.json().get('session_id')
+                    if sid:
+                        resp = await _node_request(node, 'POST', '/config/port',
+                                                   json={"session_id": sid, "port": new_ss_port})
+                        if resp and resp.status_code == 200:
+                            node.ss_port = new_ss_port
+                            node_ok += 1
+                            logger.info(f"Node {node.name}: SS port changed to {new_ss_port}")
+                        else:
+                            code = resp.status_code if resp else 'no response'
+                            body = resp.text[:200] if resp else ''
+                            error_details.append(f"{node.name}: failed ({code}) {body}")
+                            node_errors += 1
+                    else:
+                        error_details.append(f"{node.name}: no session_id from /connect")
+                        node_errors += 1
+                else:
+                    code = connect_resp.status_code if connect_resp else 'unreachable'
+                    error_details.append(f"{node.name}: cannot connect ({code})")
                     node_errors += 1
-        
-        # Regenerate all users' access URLs with the new port
-        users = (await db.execute(
-            select(VPNUser).where(VPNUser.assigned_node_id.isnot(None), VPNUser.ss_password.isnot(None))
-        )).scalars().all()
-        for user in users:
-            node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
-            if node:
-                user.access_url = await _build_user_ss_url_from_node(user, node, db)
-                updated += 1
-        logger.info(f"SS port changed to {new_ss_port}, updated {len(nodes)} nodes, regenerated {updated} user URLs, {node_errors} node errors")
+            except Exception as e:
+                error_details.append(f"{node.name}: {str(e)[:100]}")
+                logger.error(f"Node {node.name}: port change error: {e}")
+                node_errors += 1
+
+        if node_ok == 0 and node_errors > 0:
+            logger.error(f"Port change failed on all {node_errors} nodes: {error_details}")
+            raise HTTPException(502,
+                f"Port change failed — no nodes could be reached. "
+                f"Make sure your node is running and updated. Errors: {'; '.join(error_details)}")
+
+    # Now save all settings to DB (port only saved if nodes confirmed)
+    for key, value in req.settings.items():
+        existing = (await db.execute(select(PanelSettings).where(PanelSettings.key == key))).scalar_one_or_none()
+        if existing:
+            if key == 'ss_port' and ss_port_changed:
+                if node_ok > 0:
+                    existing.value = str(value)
+                # else: keep old value — nodes didn't change
+            else:
+                existing.value = str(value)
+        else:
+            if key == 'ss_port' and ss_port_changed and node_ok == 0:
+                continue  # Don't save port if no nodes changed
+            db.add(PanelSettings(key=key, value=str(value)))
+
+    if ss_port_changed and node_ok > 0:
+        logger.info(f"SS port changed to {new_ss_port}: {node_ok} nodes OK, {node_errors} errors")
 
     db.add(AuditLog(admin_id=int(admin["sub"]), action='settings_updated',
-                    details=f'Panel settings updated' + (f' — SS port changed to {new_ss_port}, {updated} URLs regenerated' if ss_port_changed else ''),
+                    details=f'Panel settings updated' + (f' — SS port changed to {new_ss_port}, {node_ok} nodes updated' if ss_port_changed else ''),
                     ip_address=request.client.host if request.client else None))
-    return {"message": "Settings updated" + (f", {updated} user URLs regenerated" + (f" ({node_errors} node errors)" if node_errors else "") if ss_port_changed else "")}
+    msg = "Settings updated"
+    if ss_port_changed:
+        msg += f", port changed on {node_ok} node(s)"
+        if node_errors:
+            msg += f" ({node_errors} failed: {'; '.join(error_details)})"
+    return {"message": msg}
 
 
 # ===== Backup =====
@@ -1289,7 +1325,7 @@ async def license_heartbeat():
                     logger.info("No active license found")
         except Exception as e:
             logger.error(f"License heartbeat error: {e}")
-        await asyncio.sleep(21600)  # 6 hours
+        await asyncio.sleep(1800)  # Check every 30 minutes
 
 
 async def user_validation_task():
@@ -1330,7 +1366,7 @@ async def user_validation_task():
         except Exception as e:
             logger.error(f"User validation task error: {e}")
         
-        await asyncio.sleep(300)  # 5 minutes
+        await asyncio.sleep(60)  # Check every 60 seconds for quick enforcement
 
 
 # ===== App Events =====
