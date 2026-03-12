@@ -16,20 +16,20 @@ const formatBytes = (bytes) => {
 
 const StatCard = ({ icon: Icon, label, value, sub, color, delay }) => (
   <motion.div
-    initial={{ opacity: 0, y: 20 }}
+    initial={{ opacity: 0, y: 12 }}
     animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.4, delay }}
+    transition={{ duration: 0.3, delay }}
   >
-    <Card className="ll-card border-white/5 hover:border-white/10 transition-colors duration-300 group" data-testid={`stat-${label.toLowerCase().replace(/\s/g, '-')}`}>
-      <CardContent className="p-6">
-        <div className="flex items-start justify-between">
-          <div className="space-y-3">
-            <p className="text-xs uppercase tracking-wider text-gray-500 font-medium">{label}</p>
-            <p className="text-3xl font-bold text-white" style={{ fontFamily: 'Outfit' }}>{value}</p>
-            {sub && <p className="text-xs text-gray-500">{sub}</p>}
+    <Card className="ll-card border-white/5 hover:border-white/10 transition-colors duration-300" data-testid={`stat-${label.toLowerCase().replace(/\s/g, '-')}`}>
+      <CardContent className="p-3 sm:p-5">
+        <div className="flex items-center gap-3 sm:flex-col sm:items-start sm:gap-0">
+          <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center shrink-0 sm:mb-3 ${color}`}>
+            <Icon className="w-4 h-4 sm:w-[18px] sm:h-[18px]" strokeWidth={1.5} />
           </div>
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${color}`}>
-            <Icon className="w-5 h-5" strokeWidth={1.5} />
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] sm:text-xs uppercase tracking-wider text-gray-500 font-medium truncate">{label}</p>
+            <p className="text-xl sm:text-2xl lg:text-3xl font-bold text-white leading-tight" style={{ fontFamily: 'Outfit' }}>{value}</p>
+            {sub && <p className="text-[10px] sm:text-xs text-gray-500 truncate mt-0.5">{sub}</p>}
           </div>
         </div>
       </CardContent>
@@ -46,65 +46,65 @@ export default function DashboardPage() {
   }, []);
 
   if (!data) return (
-    <div className="space-y-6 animate-pulse">
-      <div className="h-8 w-48 bg-white/5 rounded" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {[...Array(4)].map((_, i) => <div key={i} className="h-32 bg-white/5 rounded-xl" />)}
+    <div className="space-y-4 animate-pulse">
+      <div className="h-7 w-36 bg-white/5 rounded" />
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
+        {[...Array(5)].map((_, i) => <div key={i} className="h-20 sm:h-28 bg-white/5 rounded-xl" />)}
       </div>
     </div>
   );
 
   return (
-    <div className="space-y-8" data-testid="dashboard-page">
+    <div className="space-y-5 sm:space-y-8" data-testid="dashboard-page">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold text-white" style={{ fontFamily: 'Outfit' }}>
+        <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-white" style={{ fontFamily: 'Outfit' }}>
           {t('dashboard.title')}
         </h1>
-        <p className="text-sm text-gray-500 mt-1">{t('dashboard.overview')}</p>
+        <p className="text-xs sm:text-sm text-gray-500 mt-0.5">{t('dashboard.overview')}</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-4">
         <StatCard icon={Server} label={t('dashboard.totalNodes')} value={data.nodes.total}
-          sub={`${data.nodes.online} ${t('common.online')} / ${data.nodes.offline} ${t('common.offline')}`}
+          sub={`${data.nodes.online} online / ${data.nodes.offline} off`}
           color="bg-cyan-500/10 text-cyan-400" delay={0} />
         <StatCard icon={Users} label={t('dashboard.totalUsers')} value={data.users.total}
           sub={`${data.users.active} ${t('common.active')}`}
-          color="bg-indigo-500/10 text-indigo-400" delay={0.1} />
+          color="bg-indigo-500/10 text-indigo-400" delay={0.05} />
         <StatCard icon={Activity} label={t('dashboard.trafficToday')} value={formatBytes(data.traffic.today)}
-          sub={`${t('dashboard.trafficTotal')}: ${formatBytes(data.traffic.total)}`}
-          color="bg-emerald-500/10 text-emerald-400" delay={0.2} />
+          sub={`Total: ${formatBytes(data.traffic.total)}`}
+          color="bg-emerald-500/10 text-emerald-400" delay={0.1} />
         <StatCard icon={Smartphone} label={t('dashboard.connectedDevices')} value={data.connected_devices || 0}
-          sub={data.connected_ips?.length ? `${data.connected_ips.length} ${t('dashboard.uniqueIps')}` : t('dashboard.noConnections')}
-          color="bg-purple-500/10 text-purple-400" delay={0.3} />
+          sub={data.connected_ips?.length ? `${data.connected_ips.length} IPs` : 'No connections'}
+          color="bg-purple-500/10 text-purple-400" delay={0.15} />
         <StatCard icon={Key} label={t('dashboard.licenseStatus')} value={data.license.active ? t('common.active') : 'N/A'}
-          sub={data.license.key ? (data.license.days_left !== null ? `${data.license.days_left} ${t('dashboard.daysLeft')}` : data.license.key) : t('dashboard.noLicense')}
-          color={data.license.days_left !== null && data.license.days_left <= 7 ? "bg-red-500/10 text-red-400" : "bg-amber-500/10 text-amber-400"} delay={0.4} />
+          sub={data.license.key ? (data.license.days_left !== null ? `${data.license.days_left}d left` : '✓') : 'No license'}
+          color={data.license.days_left !== null && data.license.days_left <= 7 ? "bg-red-500/10 text-red-400" : "bg-amber-500/10 text-amber-400"} delay={0.2} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 lg:gap-6">
         {/* Node Health */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
           <Card className="ll-card border-white/5" data-testid="node-health-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold text-white" style={{ fontFamily: 'Outfit' }}>
+            <CardHeader className="px-3 sm:px-6 py-3 pb-2">
+              <CardTitle className="text-sm sm:text-base font-semibold text-white" style={{ fontFamily: 'Outfit' }}>
                 {t('dashboard.nodeHealth')}
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className="px-3 sm:px-6 pb-3 space-y-1">
               {data.node_health.length === 0 ? (
-                <p className="text-sm text-gray-500">{t('common.noData')}</p>
+                <p className="text-xs sm:text-sm text-gray-500 py-2">{t('common.noData')}</p>
               ) : data.node_health.map((node) => (
-                <div key={node.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-white/[0.02] transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-2 h-2 rounded-full ${node.status === 'online' ? 'll-status-online' : node.status === 'offline' ? 'll-status-offline' : 'll-status-unknown'}`} />
-                    <span className="text-sm text-gray-300">{node.name}</span>
-                    {node.country && <span className="text-xs text-gray-600 font-mono">{node.country}</span>}
+                <div key={node.id} className="flex items-center justify-between py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                  <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                    <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shrink-0 ${node.status === 'online' ? 'll-status-online' : node.status === 'offline' ? 'll-status-offline' : 'll-status-unknown'}`} />
+                    <span className="text-xs sm:text-sm text-gray-300 truncate">{node.name}</span>
+                    {node.country && <span className="text-[10px] sm:text-xs text-gray-600 font-mono shrink-0">{node.country}</span>}
                   </div>
-                  <Badge variant={node.status === 'online' ? 'default' : 'destructive'} className="text-[10px] h-5">
+                  <Badge variant={node.status === 'online' ? 'default' : 'destructive'} className="text-[9px] sm:text-[10px] h-4 sm:h-5 shrink-0 ml-2">
                     {node.status === 'online' ? (
-                      <><ArrowUpRight className="w-3 h-3 mr-1" />{t('common.online')}</>
+                      <><ArrowUpRight className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5" />{t('common.online')}</>
                     ) : (
-                      <><ArrowDownRight className="w-3 h-3 mr-1" />{t('common.offline')}</>
+                      <><ArrowDownRight className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-0.5" />{t('common.offline')}</>
                     )}
                   </Badge>
                 </div>
@@ -114,27 +114,27 @@ export default function DashboardPage() {
         </motion.div>
 
         {/* Recent Activity */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
           <Card className="ll-card border-white/5" data-testid="recent-activity-card">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold text-white" style={{ fontFamily: 'Outfit' }}>
+            <CardHeader className="px-3 sm:px-6 py-3 pb-2">
+              <CardTitle className="text-sm sm:text-base font-semibold text-white" style={{ fontFamily: 'Outfit' }}>
                 {t('dashboard.recentActivity')}
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-1">
+            <CardContent className="px-3 sm:px-6 pb-3 space-y-0.5">
               {data.recent_activity.length === 0 ? (
-                <p className="text-sm text-gray-500">{t('common.noData')}</p>
+                <p className="text-xs sm:text-sm text-gray-500 py-2">{t('common.noData')}</p>
               ) : data.recent_activity.map((log) => (
-                <div key={log.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-white/[0.02] transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className="w-1.5 h-1.5 rounded-full bg-cyan-500/50" />
-                    <div>
-                      <span className="text-sm text-gray-300">{log.action.replace(/_/g, ' ')}</span>
-                      {log.details && <p className="text-xs text-gray-600 mt-0.5">{log.details}</p>}
+                <div key={log.id} className="flex items-center justify-between py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg hover:bg-white/[0.02] transition-colors gap-2">
+                  <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                    <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-cyan-500/50 shrink-0" />
+                    <div className="min-w-0">
+                      <span className="text-xs sm:text-sm text-gray-300 block truncate">{log.action.replace(/_/g, ' ')}</span>
+                      {log.details && <p className="text-[10px] sm:text-xs text-gray-600 truncate">{log.details}</p>}
                     </div>
                   </div>
-                  <span className="text-[10px] text-gray-600 font-mono whitespace-nowrap">
-                    {new Date(log.created_at).toLocaleDateString('en-GB')}
+                  <span className="text-[9px] sm:text-[10px] text-gray-600 font-mono whitespace-nowrap shrink-0">
+                    {new Date(log.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                   </span>
                 </div>
               ))}

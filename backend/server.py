@@ -1350,8 +1350,8 @@ async def collect_node_stats():
     """Poll /stats from each online node every 15s.
     
     - Stores connected devices/IPs in _node_stats_cache for API responses.
-    - Computes traffic deltas and writes to TrafficLog (distributed across
-      active users on each node, since single-password mode can't distinguish users).
+    - Uses per-user traffic from outline-ss-server Prometheus metrics when available.
+    - Falls back to even distribution across active users when per-user data unavailable.
     - Updates last_connected_at for users on nodes with active connections.
     """
     while True:
@@ -1369,6 +1369,7 @@ async def collect_node_stats():
                         upload = data.get('upload', 0)
                         download = data.get('download', 0)
                         total_bytes = upload + download
+                        per_user_data = data.get('per_user', {})
                         
                         # Store in runtime cache for API responses
                         _node_stats_cache[node.id] = {
@@ -1378,41 +1379,59 @@ async def collect_node_stats():
                             "connected_ips": data.get('connected_ips', []),
                         }
                         
-                        # Compute delta since last poll
-                        have_baseline = node.id in _node_last_bytes
-                        last = _node_last_bytes.get(node.id, 0)
-                        delta = total_bytes - last if total_bytes > last else 0
-                        _node_last_bytes[node.id] = total_bytes
-                        
-                        if delta > 0 and have_baseline:
-                            # Distribute delta across active users on this node
-                            active_users = (await session.execute(
+                        # Per-user traffic from Prometheus (preferred)
+                        if per_user_data:
+                            # Build username->user_id map for this node
+                            node_users = (await session.execute(
                                 select(VPNUser).where(
-                                    VPNUser.assigned_node_id == node.id,
-                                    VPNUser.status == 'active'
+                                    VPNUser.assigned_node_id == node.id
                                 )
                             )).scalars().all()
+                            user_map = {u.username: u for u in node_users}
                             
-                            if active_users:
-                                per_user = delta // len(active_users)
-                                remainder = delta % len(active_users)
-                                for i, user in enumerate(active_users):
-                                    user_bytes = per_user + (1 if i < remainder else 0)
-                                    if user_bytes > 0:
+                            # Track per-user cumulative bytes; compute delta
+                            last_per_user = _node_last_bytes.get(f"{node.id}_per_user", {})
+                            new_per_user = {}
+                            for username, traffic in per_user_data.items():
+                                user_total = traffic.get("upload", 0) + traffic.get("download", 0)
+                                new_per_user[username] = user_total
+                                last_val = last_per_user.get(username, None)
+                                if last_val is not None:
+                                    delta = user_total - last_val if user_total > last_val else 0
+                                    if delta > 0 and username in user_map:
                                         session.add(TrafficLog(
-                                            user_id=user.id,
+                                            user_id=user_map[username].id,
                                             node_id=node.id,
-                                            bytes_transferred=user_bytes,
+                                            bytes_transferred=delta,
                                         ))
-                            else:
-                                # No active users — log traffic to node only
-                                session.add(TrafficLog(
-                                    user_id=None,
-                                    node_id=node.id,
-                                    bytes_transferred=delta,
-                                ))
+                            _node_last_bytes[f"{node.id}_per_user"] = new_per_user
+                        else:
+                            # Fallback: distribute total delta evenly
+                            have_baseline = node.id in _node_last_bytes
+                            last = _node_last_bytes.get(node.id, 0)
+                            delta = total_bytes - last if total_bytes > last else 0
+                            _node_last_bytes[node.id] = total_bytes
+                            
+                            if delta > 0 and have_baseline:
+                                active_users = (await session.execute(
+                                    select(VPNUser).where(
+                                        VPNUser.assigned_node_id == node.id,
+                                        VPNUser.status == 'active'
+                                    )
+                                )).scalars().all()
+                                if active_users:
+                                    share = delta // len(active_users)
+                                    remainder = delta % len(active_users)
+                                    for i, user in enumerate(active_users):
+                                        user_bytes = share + (1 if i < remainder else 0)
+                                        if user_bytes > 0:
+                                            session.add(TrafficLog(
+                                                user_id=user.id,
+                                                node_id=node.id,
+                                                bytes_transferred=user_bytes,
+                                            ))
                         
-                        # Update last_connected_at for active users on this node if there are connections
+                        # Update last_connected_at for users with active connections
                         if data.get('connected_devices', 0) > 0:
                             connected_users = (await session.execute(
                                 select(VPNUser).where(
@@ -1424,7 +1443,7 @@ async def collect_node_stats():
                             for cu in connected_users:
                                 cu.last_connected_at = now
 
-                        logger.debug(f"Node {node.name} stats: up={upload}, down={download}, devices={data.get('connected_devices', 0)}, delta={delta}")
+                        logger.debug(f"Node {node.name} stats: up={upload}, down={download}, per_user_keys={len(per_user_data)}, devices={data.get('connected_devices', 0)}")
                     except Exception as e:
                         logger.debug(f"Failed to collect stats from {node.name}: {e}")
                 await session.commit()
