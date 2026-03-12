@@ -105,26 +105,28 @@ export default function NodesPage() {
 
   return (
     <div className="space-y-6" data-testid="nodes-page">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-white" style={{ fontFamily: 'Outfit' }}>{t('nodes.title')}</h1>
-          <p className="text-sm text-gray-500 mt-1">Manage your Shadowsocks VPN servers</p>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-bold text-white truncate" style={{ fontFamily: 'Outfit' }}>{t('nodes.title')}</h1>
+            <p className="text-sm text-gray-500 mt-1 hidden sm:block">Manage your Shadowsocks VPN servers</p>
+          </div>
+          <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 shrink-0" data-testid="add-node-button">
+            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">{t('nodes.addNode')}</span><span className="sm:hidden">Add</span>
+          </Button>
         </div>
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 -mb-1">
           <Button onClick={refreshAll} disabled={refreshing} variant="outline"
-            className="border-white/10 text-gray-300 gap-2 flex-1 sm:flex-none" data-testid="refresh-all-button">
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+            className="border-white/10 text-gray-300 gap-2 shrink-0 h-9 text-xs" data-testid="refresh-all-button">
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
           </Button>
           <Button onClick={regenerateUrls} variant="outline"
-            className="border-white/10 text-gray-300 gap-2 flex-1 sm:flex-none">
-            <RefreshCw className="w-4 h-4" /> Regen URLs
+            className="border-white/10 text-gray-300 gap-2 shrink-0 h-9 text-xs">
+            <RefreshCw className="w-3.5 h-3.5" /> Regen URLs
           </Button>
           <Button onClick={showCertificate} variant="outline"
-            className="border-white/10 text-gray-300 gap-2 flex-1 sm:flex-none">
-            <ShieldCheck className="w-4 h-4" /> Certificate
-          </Button>
-          <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 flex-1 sm:flex-none" data-testid="add-node-button">
-            <Plus className="w-4 h-4" /> {t('nodes.addNode')}
+            className="border-white/10 text-gray-300 gap-2 shrink-0 h-9 text-xs">
+            <ShieldCheck className="w-3.5 h-3.5" /> Certificate
           </Button>
         </div>
       </div>

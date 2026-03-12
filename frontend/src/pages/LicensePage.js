@@ -59,25 +59,27 @@ export default function LicensePage() {
 
   return (
     <div className="space-y-6" data-testid="license-page">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-white" style={{ fontFamily: 'Outfit' }}>{t('licenses.title')}</h1>
-          <p className="text-sm text-gray-500 mt-1">Generate and manage license keys</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { setValidateOpen(true); setValidateResult(null); setValidateKey(''); }}
-            className="border-white/10 text-gray-300 gap-2" data-testid="validate-license-button">
-            <ShieldCheck className="w-4 h-4" /> {t('licenses.validate')}
-          </Button>
-          <Button onClick={() => setCreateOpen(true)} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2" data-testid="create-license-button">
-            <Plus className="w-4 h-4" /> {t('licenses.createLicense')}
-          </Button>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-bold text-white truncate" style={{ fontFamily: 'Outfit' }}>{t('licenses.title')}</h1>
+            <p className="text-sm text-gray-500 mt-1 hidden sm:block">Generate and manage license keys</p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Button variant="outline" onClick={() => { setValidateOpen(true); setValidateResult(null); setValidateKey(''); }}
+              className="border-white/10 text-gray-300 gap-2" data-testid="validate-license-button">
+              <ShieldCheck className="w-4 h-4" /> <span className="hidden sm:inline">{t('licenses.validate')}</span>
+            </Button>
+            <Button onClick={() => setCreateOpen(true)} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2" data-testid="create-license-button">
+              <Plus className="w-4 h-4" /> <span className="hidden sm:inline">{t('licenses.createLicense')}</span><span className="sm:hidden">Create</span>
+            </Button>
+          </div>
         </div>
       </div>
 
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <Card className="ll-card border-white/5">
-          <CardContent className="p-0">
+        <Card className="ll-card border-white/5 hidden md:block">
+          <CardContent className="p-0 overflow-x-auto">
             <Table data-testid="license-table">
               <TableHeader>
                 <TableRow className="border-white/5 hover:bg-transparent">
@@ -124,6 +126,50 @@ export default function LicensePage() {
             </Table>
           </CardContent>
         </Card>
+
+        {/* Mobile card list */}
+        <div className="md:hidden space-y-3">
+          {loading ? (
+            <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-gray-500" /></div>
+          ) : licenses.length === 0 ? (
+            <p className="text-center py-12 text-gray-500">{t('common.noData')}</p>
+          ) : licenses.map((lic) => (
+            <Card key={lic.id} className="ll-card border-white/5">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <Badge variant={statusColor(lic.status)} className="text-[10px] h-5">{lic.status}</Badge>
+                  {lic.status === 'active' && (
+                    <Button variant="ghost" size="sm" className="text-red-400 hover:text-red-300 gap-1 h-8 text-xs touch-manipulation"
+                      onClick={() => handleRevoke(lic.id)}>
+                      <Trash2 className="w-3 h-3" /> {t('licenses.revoke')}
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <p className="font-mono text-[11px] text-gray-300 truncate flex-1">{lic.license_key}</p>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-gray-500 touch-manipulation"
+                    onClick={async () => { const ok = await copyToClipboard(lic.license_key); ok ? toast.success('Copied') : toast.error('Copy failed'); }}>
+                    <Copy className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <p className="text-gray-500 uppercase text-[10px]">Expires</p>
+                    <p className="text-gray-400">{lic.expire_days}d</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 uppercase text-[10px]">Max</p>
+                    <p className="text-gray-400">{lic.max_servers}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 uppercase text-[10px]">Active</p>
+                    <p className="text-gray-400">{lic.activated_servers}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </motion.div>
 
       {/* Create License Dialog */}

@@ -49,9 +49,9 @@ export default function AuditLogsPage() {
       </div>
 
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <Card className="ll-card border-white/5">
+        <Card className="ll-card border-white/5 hidden md:block">
           <CardContent className="p-0 overflow-x-auto">
-            <Table data-testid="audit-table" className="min-w-[560px]">
+            <Table data-testid="audit-table">
               <TableHeader>
                 <TableRow className="border-white/5 hover:bg-transparent">
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('audit.action')}</TableHead>
@@ -81,6 +81,28 @@ export default function AuditLogsPage() {
             </Table>
           </CardContent>
         </Card>
+
+        {/* Mobile card list */}
+        <div className="md:hidden space-y-2">
+          {loading ? (
+            <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-gray-500" /></div>
+          ) : data.logs.length === 0 ? (
+            <p className="text-center py-12 text-gray-500">{t('common.noData')}</p>
+          ) : data.logs.map((log) => (
+            <div key={log.id} className="p-3 rounded-lg bg-black/30 border border-white/5 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border ${actionColors[log.action] || 'bg-gray-500/10 text-gray-400 border-gray-500/20'}`}>
+                  {log.action.replace(/_/g, ' ')}
+                </span>
+                <span className="text-[10px] text-gray-600 font-mono shrink-0">
+                  {new Date(log.created_at).toLocaleDateString()}
+                </span>
+              </div>
+              {log.details && <p className="text-xs text-gray-400 break-words">{log.details}</p>}
+              {log.ip_address && <p className="text-[10px] text-gray-600 font-mono">{log.ip_address}</p>}
+            </div>
+          ))}
+        </div>
 
         {totalPages > 1 && (
           <div className="flex items-center justify-between pt-4">

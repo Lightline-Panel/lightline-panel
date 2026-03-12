@@ -22,10 +22,10 @@ export default function Layout({ children }) {
   };
 
   return (
-    <div className="flex min-h-screen bg-[#050505] ll-grid-bg">
+    <div className="flex min-h-screen bg-[#050505] ll-grid-bg overflow-x-hidden">
       <Sidebar />
 
-      <main className="flex-1 md:ml-64 min-h-screen relative">
+      <main className="flex-1 md:ml-64 min-h-screen relative w-0 min-w-0">
         {/* Top bar */}
         <header className="sticky top-0 z-40 flex items-center justify-between h-14 px-4 md:px-8 border-b border-white/5 bg-[#050505]/80 backdrop-blur-xl">
           <div className="flex items-center gap-3">

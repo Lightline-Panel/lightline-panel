@@ -104,28 +104,31 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-6" data-testid="users-page">
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-white" style={{ fontFamily: 'Outfit' }}>{t('users.title')}</h1>
-          <p className="text-sm text-gray-500 mt-1">Manage VPN access keys and users</p>
-        </div>
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <Input placeholder={t('common.search')} value={search} onChange={(e) => setSearch(e.target.value)}
-            className="bg-black/50 border-white/10 h-9 text-sm text-gray-200 w-full sm:w-48" data-testid="user-search-input" />
-          <Button variant="outline" onClick={() => { setBulkSwitchOpen(true); setBulkNodeId(''); }}
-            className="border-white/10 text-gray-300 gap-2 whitespace-nowrap" data-testid="bulk-switch-button">
-            <Users className="w-4 h-4" /> Switch All
+      <div className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl sm:text-3xl font-bold text-white truncate" style={{ fontFamily: 'Outfit' }}>{t('users.title')}</h1>
+            <p className="text-sm text-gray-500 mt-1 hidden sm:block">Manage VPN access keys and users</p>
+          </div>
+          <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 shrink-0" data-testid="add-user-button">
+            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">{t('users.addUser')}</span><span className="sm:hidden">Add</span>
           </Button>
-          <Button onClick={openAdd} className="bg-cyan-600 hover:bg-cyan-500 text-black font-semibold gap-2 whitespace-nowrap" data-testid="add-user-button">
-            <Plus className="w-4 h-4" /> {t('users.addUser')}
+        </div>
+        <div className="flex items-center gap-2">
+          <Input placeholder={t('common.search')} value={search} onChange={(e) => setSearch(e.target.value)}
+            className="bg-black/50 border-white/10 h-10 text-sm text-gray-200 flex-1" data-testid="user-search-input" />
+          <Button variant="outline" onClick={() => { setBulkSwitchOpen(true); setBulkNodeId(''); }}
+            className="border-white/10 text-gray-300 gap-2 shrink-0 h-10" data-testid="bulk-switch-button">
+            <Users className="w-4 h-4" /> <span className="hidden sm:inline">Switch All</span>
           </Button>
         </div>
       </div>
 
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <Card className="ll-card border-white/5">
+        {/* Desktop table — hidden on mobile */}
+        <Card className="ll-card border-white/5 hidden md:block">
           <CardContent className="p-0 overflow-x-auto">
-            <Table data-testid="user-table" className="min-w-[640px]">
+            <Table data-testid="user-table">
               <TableHeader>
                 <TableRow className="border-white/5 hover:bg-transparent">
                   <TableHead className="text-gray-500 text-xs uppercase tracking-wider">{t('users.username')}</TableHead>
@@ -213,6 +216,91 @@ export default function UsersPage() {
             </Table>
           </CardContent>
         </Card>
+
+        {/* Mobile card list — shown only on small screens */}
+        <div className="md:hidden space-y-3">
+          {loading ? (
+            <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-gray-500" /></div>
+          ) : filtered.length === 0 ? (
+            <p className="text-center py-12 text-gray-500">{t('common.noData')}</p>
+          ) : filtered.map((u) => (
+            <Card key={u.id} className="ll-card border-white/5">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-gray-200 font-medium truncate">{u.username}</span>
+                    <Badge variant={u.status === 'active' ? 'default' : 'destructive'} className="text-[10px] h-5 shrink-0">
+                      {u.status}
+                    </Badge>
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-10 w-10 text-gray-500 shrink-0 touch-manipulation" data-testid={`user-actions-m-${u.id}`}>
+                        <MoreHorizontal className="w-5 h-5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="bg-zinc-950 border-white/10">
+                      <DropdownMenuItem onClick={() => openEdit(u)} className="text-gray-300 gap-2 min-h-[44px]">
+                        <Pencil className="w-3.5 h-3.5" /> {t('common.edit')}
+                      </DropdownMenuItem>
+                      {u.access_url && (
+                        <DropdownMenuItem onClick={() => setQrUser(u)} className="text-gray-300 gap-2 min-h-[44px]">
+                          <QrCode className="w-3.5 h-3.5" /> {t('users.qrCode')}
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem onClick={() => { setSwitchUser(u); setSwitchNodeId(''); }} className="text-gray-300 gap-2 min-h-[44px]">
+                        <ArrowLeftRight className="w-3.5 h-3.5" /> {t('users.switchNode')}
+                      </DropdownMenuItem>
+                      {u.access_url && (
+                        <DropdownMenuItem
+                          onSelect={async (e) => {
+                            e.preventDefault();
+                            const ok = await copyToClipboard(u.access_url);
+                            if (ok) toast.success('SS URL copied');
+                            else toast.error('Copy failed');
+                          }}
+                          className="text-gray-300 gap-2 min-h-[44px]"
+                        >
+                          <Copy className="w-4 h-4" /> Copy SS URL
+                        </DropdownMenuItem>
+                      )}
+                      {u.sub_url && (
+                        <DropdownMenuItem
+                          onSelect={async (e) => {
+                            e.preventDefault();
+                            const ok = await copyToClipboard(`ssconf://${window.location.host}${u.sub_url}`);
+                            if (ok) toast.success('Sub URL copied');
+                            else toast.error('Copy failed');
+                          }}
+                          className="text-gray-300 gap-2 min-h-[44px]"
+                        >
+                          <Copy className="w-4 h-4" /> Copy Sub URL
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem onClick={() => handleDelete(u)} className="text-red-400 gap-2 min-h-[44px]">
+                        <Trash2 className="w-3.5 h-3.5" /> {t('common.delete')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <p className="text-gray-500 uppercase text-[10px]">Node</p>
+                    <p className="text-gray-400 truncate">{u.node_name || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 uppercase text-[10px]">Traffic</p>
+                    <p className="text-gray-400 font-mono">{formatBytes(u.traffic_used)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500 uppercase text-[10px]">Expires</p>
+                    <p className="text-gray-400 font-mono">{u.expire_date ? new Date(u.expire_date).toLocaleDateString() : '—'}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </motion.div>
 
       {/* Add/Edit Dialog */}
