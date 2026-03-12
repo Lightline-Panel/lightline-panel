@@ -86,12 +86,14 @@ class NodeCreate(BaseModel):
     name: str
     ip: str
     port: Optional[int] = 62050       # SERVICE_PORT (like Marzban)
+    ss_port: Optional[int] = None     # Shadowsocks port (uses global if not specified)
     country: Optional[str] = None
 
 class NodeUpdate(BaseModel):
     name: Optional[str] = None
     ip: Optional[str] = None
     port: Optional[int] = None        # SERVICE_PORT (like Marzban)
+    ss_port: Optional[int] = None     # Shadowsocks port
     country: Optional[str] = None
 
 class UserCreate(BaseModel):
@@ -471,15 +473,17 @@ async def get_node_certificate(admin=Depends(get_current_admin)):
 @api_router.post("/nodes")
 async def create_node(req: NodeCreate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     port = req.port or 62050
-    node = Node(name=req.name, ip=req.ip, api_port=port,
+    # Get current global SS port for new node
+    ss_port = req.ss_port or await _get_global_ss_port(db)
+    node = Node(name=req.name, ip=req.ip, api_port=port, ss_port=ss_port,
                 country=req.country, status='offline')
     db.add(node)
     await db.flush()
     db.add(AuditLog(admin_id=int(admin["sub"]), action='node_created',
-                    details=f'Node "{req.name}" ({req.country}) added — port {port}',
+                    details=f'Node "{req.name}" ({req.country}) added — API port {port}, SS port {ss_port}',
                     ip_address=request.client.host if request.client else None))
     await cache_delete('dashboard')
-    return {"id": node.id, "name": node.name, "status": node.status, "port": port}
+    return {"id": node.id, "name": node.name, "status": node.status, "port": port, "ss_port": ss_port}
 
 @api_router.put("/nodes/{node_id}")
 async def update_node(node_id: int, req: NodeUpdate, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
@@ -933,8 +937,14 @@ async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(g
                 ss_port_changed = True
                 new_ss_port = int(value)
 
-    # When SS port changes, regenerate all users' access_url
+    # When SS port changes, update all nodes' ss_port and regenerate all users' access_url
     if ss_port_changed and new_ss_port:
+        # Update all nodes' ss_port to match the new global port
+        nodes = (await db.execute(select(Node))).scalars().all()
+        for node in nodes:
+            node.ss_port = new_ss_port
+        
+        # Regenerate all users' access URLs
         users = (await db.execute(
             select(VPNUser).where(VPNUser.assigned_node_id.isnot(None), VPNUser.ss_password.isnot(None))
         )).scalars().all()
@@ -944,7 +954,7 @@ async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(g
             if node:
                 user.access_url = await _build_user_ss_url_from_node(user, node, db)
                 updated += 1
-        logger.info(f"SS port changed to {new_ss_port}, regenerated {updated} user access URLs")
+        logger.info(f"SS port changed to {new_ss_port}, updated {len(nodes)} nodes, regenerated {updated} user access URLs")
 
     db.add(AuditLog(admin_id=int(admin["sub"]), action='settings_updated',
                     details=f'Panel settings updated' + (f' — SS port changed to {new_ss_port}, {updated} URLs regenerated' if ss_port_changed else ''),
