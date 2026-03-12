@@ -1047,10 +1047,16 @@ async def get_subscription(access_token: str, db: AsyncSession = Depends(get_db)
         )).scalar()
         if total_used >= user.traffic_limit * 1024**3:
             raise HTTPException(403, "Traffic limit exceeded")
-    if not user.access_url:
+    # Build ss:// URL dynamically so port/password changes take effect immediately
+    # without needing to regenerate or redistribute subscription URLs
+    if not user.assigned_node_id:
+        raise HTTPException(404, "No server assigned")
+    node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+    if not node:
+        raise HTTPException(404, "Server not found")
+    ss_url = await _build_user_ss_url_from_node(user, node, db)
+    if not ss_url:
         raise HTTPException(404, "No access URL configured")
-    # Return the ss:// URL with ?outline=1 for Outline compatibility
-    ss_url = user.access_url
     if '?' not in ss_url:
         ss_url += '/?outline=1'
     return PlainTextResponse(ss_url, media_type="text/plain")
