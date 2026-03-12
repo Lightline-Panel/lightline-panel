@@ -197,7 +197,7 @@ async def validate_user_access(user: VPNUser, db: AsyncSession) -> dict:
             select(func.sum(TrafficLog.bytes_transferred)).where(TrafficLog.user_id == user.id)
         )).scalar() or 0
         
-        if total_used >= user.traffic_limit * 1024**3:  # Convert GB to bytes
+        if total_used >= user.traffic_limit:  # traffic_limit already in bytes
             errors.append("Traffic limit exceeded")
     
     return {
@@ -883,11 +883,16 @@ async def delete_user(user_id: int, request: Request, admin=Depends(get_current_
     user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
+    node_id = user.assigned_node_id
     await db.execute(delete(TrafficLog).where(TrafficLog.user_id == user_id))
     db.add(AuditLog(admin_id=int(admin["sub"]), action='user_deleted',
                     details=f'VPN user "{user.username}" deleted',
                     ip_address=request.client.host if request.client else None))
     await db.delete(user)
+    # Clear cached node stats so recreated users don't inherit stale data
+    if node_id and node_id in _node_stats_cache:
+        _node_stats_cache.pop(node_id, None)
+        _node_last_bytes.pop(node_id, None)
     await cache_delete('dashboard')
     return {"message": "User deleted"}
 
@@ -1099,7 +1104,7 @@ async def get_subscription(access_token: str, db: AsyncSession = Depends(get_db)
         total_used = (await db.execute(
             select(func.coalesce(func.sum(TrafficLog.bytes_transferred), 0)).where(TrafficLog.user_id == user.id)
         )).scalar()
-        if total_used >= user.traffic_limit * 1024**3:
+        if total_used >= user.traffic_limit:  # traffic_limit already in bytes
             raise HTTPException(403, "Traffic limit exceeded")
     # Build ss:// URL dynamically so port/password changes take effect immediately
     # without needing to regenerate or redistribute subscription URLs
@@ -1427,7 +1432,7 @@ async def user_validation_task():
         except Exception as e:
             logger.error(f"User validation task error: {e}")
         
-        await asyncio.sleep(60)  # Check every 60 seconds for quick enforcement
+        await asyncio.sleep(15)  # Check every 15 seconds to match stats polling
 
 
 # ===== App Events =====
