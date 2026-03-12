@@ -394,9 +394,33 @@ async def totp_disable(req: TOTPDisableRequest, admin=Depends(get_current_admin)
 
 # ===== Server Fingerprint =====
 
+FINGERPRINT_PATH = Path('/var/lib/lightline/certs/server_fingerprint')
+
 def get_server_fingerprint() -> str:
-    raw = f"{platform.node()}-{platform.machine()}-{uuid.getnode()}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+    """Stable server fingerprint that survives container rebuilds.
+    
+    Saved to persistent volume on first generation. Never changes.
+    Does NOT use platform.node() because Docker changes the container
+    hostname on every recreate, which would invalidate the license.
+    """
+    # Return saved fingerprint if it exists (stable across rebuilds)
+    try:
+        if FINGERPRINT_PATH.exists():
+            saved = FINGERPRINT_PATH.read_text().strip()
+            if saved:
+                return saved
+    except Exception:
+        pass
+    # Generate from stable identifiers (MAC address + architecture)
+    raw = f"{uuid.getnode()}-{platform.machine()}"
+    fp = hashlib.sha256(raw.encode()).hexdigest()[:32]
+    # Save so it's always the same
+    try:
+        FINGERPRINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        FINGERPRINT_PATH.write_text(fp)
+    except Exception:
+        pass
+    return fp
 
 
 # ===== QR Code Generation =====
@@ -406,7 +430,14 @@ async def get_user_qrcode(user_id: int, admin=Depends(get_current_admin), db: As
     user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
     if not user:
         raise HTTPException(404, "User not found")
-    url = user.access_url or user.ss_url
+    # Build URL dynamically so it always reflects the current port/password
+    url = ""
+    if user.assigned_node_id:
+        node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+        if node:
+            url = await _build_user_ss_url_from_node(user, node, db)
+    if not url:
+        url = user.access_url or ""
     if not url:
         raise HTTPException(404, "No access URL available")
     img = qrcode.make(url)
@@ -1159,6 +1190,18 @@ async def update_settings(req: SettingsUpdate, request: Request, admin=Depends(g
                 node_errors += 1
         logger.info(f"SS port → {new_ss_port}: {node_ok} OK, {node_errors} errors")
 
+        # Regenerate stored access_url for ALL users so QR codes show the new port
+        users = (await db.execute(
+            select(VPNUser).where(VPNUser.assigned_node_id.isnot(None), VPNUser.ss_password.isnot(None))
+        )).scalars().all()
+        url_count = 0
+        for user in users:
+            node = (await db.execute(select(Node).where(Node.id == user.assigned_node_id))).scalar_one_or_none()
+            if node:
+                user.access_url = await _build_user_ss_url_from_node(user, node, db, force_port=new_ss_port)
+                url_count += 1
+        logger.info(f"Regenerated {url_count} user access URLs with new port {new_ss_port}")
+
     db.add(AuditLog(admin_id=int(admin["sub"]), action='settings_updated',
                     details=f'Settings updated' + (f' — SS port → {new_ss_port} ({node_ok} nodes live)' if ss_port_changed else ''),
                     ip_address=request.client.host if request.client else None))
@@ -1311,8 +1354,12 @@ async def license_heartbeat():
                             except Exception:
                                 pass
                     elif lic.server_fingerprint and lic.server_fingerprint != get_server_fingerprint():
-                        lic.status = 'suspended'
-                        logger.warning("License fingerprint mismatch — panel suspended")
+                        # Fingerprint changed (e.g. container rebuilt) — update it
+                        # The fingerprint is now stable (persisted to volume), but handle
+                        # legacy cases where old fingerprint used container hostname
+                        old_fp = lic.server_fingerprint
+                        lic.server_fingerprint = get_server_fingerprint()
+                        logger.info(f"License fingerprint updated: {old_fp[:8]}... → {lic.server_fingerprint[:8]}...")
                     else:
                         days_left = (expire_date - datetime.now(timezone.utc)).days if lic.expire_days > 0 else 'unlimited'
                         logger.info(f"License heartbeat OK — expires in {days_left} days")
@@ -1379,29 +1426,54 @@ async def startup():
         if admin_count == 0:
             logger.warning("No admin account found. Create one with: docker exec -it lightline-backend python cli.py admin create")
         if not lic:
-            # Try to restore license from persistent backup file
-            backup = _load_license_from_file()
-            if backup and backup.get("license_key"):
-                logger.info("Restoring license from backup file...")
-                info = verify_license_key(backup["license_key"])
+            # Check for suspended license (old fingerprint bug) — reactivate it
+            suspended = (await session.execute(
+                select(License).where(License.status == 'suspended').limit(1)
+            )).scalar_one_or_none()
+            if suspended:
+                info = verify_license_key(suspended.license_key)
                 if info and not info["expired"]:
-                    lic = License(
-                        license_key=backup["license_key"],
-                        expire_days=info["expire_days"],
-                        max_servers=info["max_servers"],
-                        activated_servers=1,
-                        status='active',
-                        server_fingerprint=backup.get("server_fingerprint") or get_server_fingerprint(),
-                    )
-                    session.add(lic)
-                    session.add(AuditLog(admin_id=None, action='license_restored',
-                                        details=f'License auto-restored from backup: {backup["license_key"][:16]}...'))
+                    suspended.status = 'active'
+                    suspended.server_fingerprint = get_server_fingerprint()
+                    lic = suspended
+                    session.add(AuditLog(admin_id=None, action='license_reactivated',
+                                        details=f'Suspended license reactivated (fingerprint updated)'))
                     await session.commit()
-                    logger.info("License restored successfully from backup")
+                    logger.info("Reactivated suspended license (fingerprint was stale)")
+            
+            if not lic:
+                # Try to restore license from persistent backup file
+                backup = _load_license_from_file()
+                if backup and backup.get("license_key"):
+                    logger.info("Restoring license from backup file...")
+                    info = verify_license_key(backup["license_key"])
+                    if info and not info["expired"]:
+                        # Check if this key already exists in DB (maybe with wrong status)
+                        existing = (await session.execute(
+                            select(License).where(License.license_key == backup["license_key"])
+                        )).scalar_one_or_none()
+                        if existing:
+                            existing.status = 'active'
+                            existing.server_fingerprint = get_server_fingerprint()
+                            lic = existing
+                        else:
+                            lic = License(
+                                license_key=backup["license_key"],
+                                expire_days=info["expire_days"],
+                                max_servers=info["max_servers"],
+                                activated_servers=1,
+                                status='active',
+                                server_fingerprint=get_server_fingerprint(),
+                            )
+                            session.add(lic)
+                        session.add(AuditLog(admin_id=None, action='license_restored',
+                                            details=f'License restored from backup: {backup["license_key"][:16]}...'))
+                        await session.commit()
+                        logger.info("License restored successfully from backup")
+                    else:
+                        logger.warning("Backup license is expired or invalid")
                 else:
-                    logger.warning("Backup license is expired or invalid")
-            else:
-                logger.warning("No active license found. Panel will not be accessible without a license.")
+                    logger.warning("No active license found. Activate with: lightline activate")
         if node_count == 0:
             # Create default node using environment variables
             default_ip = os.environ.get('SERVER_IP', '127.0.0.1')

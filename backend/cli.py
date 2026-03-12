@@ -26,9 +26,25 @@ from auth import hash_password
 LICENSE_SECRET = os.environ.get('LICENSE_SECRET', 'lightline-hmac-2024-secure-key').encode()
 
 
+FINGERPRINT_PATH = Path('/var/lib/lightline/certs/server_fingerprint')
+
 def get_server_fingerprint() -> str:
-    raw = f"{platform.node()}-{platform.machine()}-{uuid.getnode()}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+    """Stable server fingerprint — reads from persistent volume first."""
+    try:
+        if FINGERPRINT_PATH.exists():
+            saved = FINGERPRINT_PATH.read_text().strip()
+            if saved:
+                return saved
+    except Exception:
+        pass
+    raw = f"{uuid.getnode()}-{platform.machine()}"
+    fp = hashlib.sha256(raw.encode()).hexdigest()[:32]
+    try:
+        FINGERPRINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        FINGERPRINT_PATH.write_text(fp)
+    except Exception:
+        pass
+    return fp
 
 
 def verify_license_key(key: str) -> dict | None:
