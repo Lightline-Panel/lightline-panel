@@ -366,10 +366,11 @@ restart_cmd() {
     check_installed
     cd "$INSTALL_DIR"
     detect_compose
-    colorize blue "Restarting Lightline..."
-    $COMPOSE down
+    colorize blue "Restarting Lightline (rebuilding to apply any code changes)..."
+    $COMPOSE stop backend frontend 2>/dev/null || true
+    $COMPOSE build --no-cache backend frontend
     $COMPOSE up -d
-    colorize green "Lightline restarted."
+    colorize green "Lightline restarted (rebuilt)."
 }
 
 # ── status ──
@@ -428,13 +429,38 @@ admin_cmd() {
     detect_compose
 
     local subcmd="${1:-}"
+    shift 2>/dev/null || true
     case "$subcmd" in
         create)
             colorize blue "Creating admin account..."
             $COMPOSE exec backend python cli.py admin create
             ;;
+        delete)
+            local username="${1:-}"
+            if [ -z "$username" ]; then
+                printf "  Username to delete: "
+                read -r username
+            fi
+            if [ -z "$username" ]; then
+                colorize red "No username provided."
+                return
+            fi
+            colorize blue "Deleting admin '$username'..."
+            $COMPOSE exec backend python cli.py admin delete --user "$username"
+            ;;
+        reset)
+            colorize blue "Resetting admin password..."
+            $COMPOSE exec backend python cli.py admin reset "$@"
+            ;;
+        list)
+            $COMPOSE exec backend python cli.py admin list
+            ;;
         *)
-            echo "Usage: lightline admin create"
+            echo "Usage:"
+            echo "  lightline admin create          — Create admin account"
+            echo "  lightline admin delete [USER]    — Delete an admin account"
+            echo "  lightline admin reset            — Reset admin password"
+            echo "  lightline admin list             — List all admins"
             ;;
     esac
 }
@@ -563,6 +589,9 @@ show_help() {
     echo ""
     colorize green "  Admin commands:"
     echo "    admin create         Create admin account"
+    echo "    admin delete [USER]  Delete an admin account"
+    echo "    admin reset          Reset admin password"
+    echo "    admin list           List all admin accounts"
     echo "    license activate <K> Activate a license key"
     echo "    license show         Show current license"
     echo "    config edit          Edit .env configuration"

@@ -111,6 +111,51 @@ async def cmd_admin_create():
         print()
 
 
+async def cmd_admin_delete(username: str = None):
+    """Delete an admin account."""
+    await init_db()
+    if not username:
+        username = input("  Username to delete: ").strip()
+    if not username:
+        print("[ERROR] Username cannot be empty")
+        return
+    async with async_session() as session:
+        admin = (await session.execute(
+            select(Admin).where(Admin.username == username)
+        )).scalar_one_or_none()
+        if not admin:
+            print(f"[ERROR] Admin '{username}' not found")
+            return
+        # Safety: don't delete the last admin
+        count = (await session.execute(select(func.count(Admin.id)))).scalar()
+        if count <= 1:
+            print("[ERROR] Cannot delete the last admin account")
+            return
+        await session.delete(admin)
+        await session.commit()
+        print(f"[OK] Admin '{username}' deleted")
+
+
+async def cmd_admin_list():
+    """List all admin accounts."""
+    await init_db()
+    async with async_session() as session:
+        admins = (await session.execute(
+            select(Admin).order_by(Admin.created_at)
+        )).scalars().all()
+        if not admins:
+            print("  No admin accounts found.")
+            return
+        print()
+        print(f"  {'ID':<5} {'Username':<20} {'Role':<10} {'2FA':<5} {'Created'}")
+        print(f"  {'—'*5} {'—'*20} {'—'*10} {'—'*5} {'—'*20}")
+        for a in admins:
+            has_2fa = 'Yes' if a.totp_secret else 'No'
+            created = a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else '—'
+            print(f"  {a.id:<5} {a.username:<20} {a.role:<10} {has_2fa:<5} {created}")
+        print()
+
+
 async def cmd_admin_reset(username: str = None, password: str = None):
     """Reset admin password or create if not exists."""
     await init_db()
@@ -240,6 +285,8 @@ def print_usage():
     print()
     print("  Commands:")
     print("    admin create                           Create a new admin account (interactive)")
+    print("    admin delete [--user U]                Delete an admin account")
+    print("    admin list                             List all admin accounts")
     print("    admin reset [--user U] [--pass P]      Reset admin password")
     print("    license activate [KEY]                 Activate an HMAC-signed license key")
     print("    license show                           Show all licenses")
@@ -262,6 +309,17 @@ def main():
         sub = args[1]
         if sub == 'create':
             asyncio.run(cmd_admin_create())
+        elif sub == 'delete':
+            username = None
+            i = 2
+            while i < len(args):
+                if args[i] == '--user' and i + 1 < len(args):
+                    username = args[i + 1]; i += 2
+                else:
+                    i += 1
+            asyncio.run(cmd_admin_delete(username))
+        elif sub == 'list':
+            asyncio.run(cmd_admin_list())
         elif sub == 'reset':
             username = None
             password = None
