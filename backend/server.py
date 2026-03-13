@@ -839,6 +839,8 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
             node_name = (await db.execute(select(Node.name).where(Node.id == u.assigned_node_id))).scalar_one_or_none()
         sub_path = f"/api/sub/{u.access_token}" if u.access_token else None
         node_stats = _node_stats_cache.get(u.assigned_node_id, {}) if u.assigned_node_id else {}
+        per_user_conns = node_stats.get("per_user_connections", {})
+        user_conn_count = per_user_conns.get(u.username, 0)
         # Compute display_status: expired > limited > disabled > active
         display_status = u.status
         is_expired = False
@@ -863,8 +865,8 @@ async def get_users(admin=Depends(get_current_admin), db: AsyncSession = Depends
             "status": u.status, "display_status": display_status,
             "created_at": u.created_at.isoformat(),
             "traffic_used": traffic,
-            "online_devices": node_stats.get("connected_devices", 0),
-            "connected_ips": node_stats.get("connected_ips", []),
+            "online_devices": user_conn_count,
+            "connected_ips": [],
             "last_connected_at": u.last_connected_at.isoformat() if u.last_connected_at else None,
         })
     return result
@@ -1422,12 +1424,15 @@ async def collect_node_stats():
                         total_bytes = upload + download
                         per_user_data = data.get('per_user', {})
                         
+                        per_user_conns = data.get('per_user_connections', {})
+                        
                         # Store in runtime cache for API responses
                         _node_stats_cache[node.id] = {
                             "upload": upload,
                             "download": download,
                             "connected_devices": data.get('connected_devices', 0),
                             "connected_ips": data.get('connected_ips', []),
+                            "per_user_connections": per_user_conns,
                         }
                         
                         # Per-user traffic from Prometheus (preferred)
@@ -1482,8 +1487,18 @@ async def collect_node_stats():
                                                 bytes_transferred=user_bytes,
                                             ))
                         
-                        # Update last_connected_at for users with active connections
-                        if data.get('connected_devices', 0) > 0:
+                        # Update last_connected_at only for users with active connections (per-user)
+                        if per_user_conns:
+                            node_users_all = (await session.execute(
+                                select(VPNUser).where(VPNUser.assigned_node_id == node.id)
+                            )).scalars().all()
+                            uname_map = {u.username: u for u in node_users_all}
+                            now = datetime.now(timezone.utc)
+                            for uname, conn_count in per_user_conns.items():
+                                if conn_count > 0 and uname in uname_map:
+                                    uname_map[uname].last_connected_at = now
+                        elif data.get('connected_devices', 0) > 0:
+                            # Fallback: no per-user data, update all active users
                             connected_users = (await session.execute(
                                 select(VPNUser).where(
                                     VPNUser.assigned_node_id == node.id,
