@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy, Users, Smartphone, Power, Wifi, WifiOff, Clock, AlertTriangle } from 'lucide-react';
+import { Plus, MoreHorizontal, Pencil, Trash2, QrCode, ArrowLeftRight, Loader2, Copy, Users, Smartphone, Power, Wifi, WifiOff, Clock, AlertTriangle, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/lib/api';
 import QRCode from 'react-qr-code';
@@ -136,6 +136,11 @@ export default function UsersPage() {
   const handleDelete = async (u) => {
     if (!window.confirm(t('users.deleteConfirm'))) return;
     try { await api.delete(`/users/${u.id}`); toast.success('User deleted'); fetchData(); } catch (err) { toast.error('Error'); }
+  };
+
+  const handleResetTraffic = async (u) => {
+    if (!window.confirm(`Reset traffic for ${u.username}? This will clear all recorded traffic.`)) return;
+    try { await api.post(`/users/${u.id}/reset-traffic`); toast.success(`Traffic reset for ${u.username}`); fetchData(); } catch (err) { toast.error('Error'); }
   };
 
   const handleToggleStatus = async (u) => {
@@ -299,6 +304,9 @@ export default function UsersPage() {
                           <DropdownMenuItem onClick={() => handleToggleStatus(u)} className={`gap-2 min-h-[44px] ${u.status === 'active' ? 'text-amber-400' : 'text-green-400'}`}>
                             <Power className="w-3.5 h-3.5" /> {u.status === 'active' ? 'Disable' : 'Enable'}
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleResetTraffic(u)} className="text-orange-400 gap-2 min-h-[44px]">
+                            <RotateCcw className="w-3.5 h-3.5" /> Reset Traffic
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleDelete(u)} className="text-red-400 gap-2 min-h-[44px]">
                             <Trash2 className="w-3.5 h-3.5" /> {t('common.delete')}
                           </DropdownMenuItem>
@@ -372,6 +380,9 @@ export default function UsersPage() {
                       )}
                       <DropdownMenuItem onClick={() => handleToggleStatus(u)} className={`gap-2 min-h-[44px] ${u.status === 'active' ? 'text-amber-400' : 'text-green-400'}`}>
                         <Power className="w-3.5 h-3.5" /> {u.status === 'active' ? 'Disable' : 'Enable'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleResetTraffic(u)} className="text-orange-400 gap-2 min-h-[44px]">
+                        <RotateCcw className="w-3.5 h-3.5" /> Reset Traffic
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleDelete(u)} className="text-red-400 gap-2 min-h-[44px]">
                         <Trash2 className="w-3.5 h-3.5" /> {t('common.delete')}

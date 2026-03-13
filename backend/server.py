@@ -1011,6 +1011,18 @@ async def delete_user(user_id: int, request: Request, admin=Depends(get_current_
     await cache_delete('dashboard')
     return {"message": "User deleted"}
 
+@api_router.post("/users/{user_id}/reset-traffic")
+async def reset_user_traffic(user_id: int, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
+    user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+    await db.execute(delete(TrafficLog).where(TrafficLog.user_id == user_id))
+    db.add(AuditLog(admin_id=int(admin["sub"]), action='traffic_reset',
+                    details=f'Traffic reset for user "{user.username}"',
+                    ip_address=request.client.host if request.client else None))
+    await cache_delete('dashboard')
+    return {"message": f"Traffic reset for {user.username}"}
+
 @api_router.post("/users/{user_id}/switch-node")
 async def switch_node(user_id: int, req: SwitchNodeRequest, request: Request, admin=Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
     user = (await db.execute(select(VPNUser).where(VPNUser.id == user_id))).scalar_one_or_none()
@@ -1425,6 +1437,8 @@ async def collect_node_stats():
                         per_user_data = data.get('per_user', {})
                         
                         per_user_conns = data.get('per_user_connections', {})
+                        has_per_user_traffic = 'per_user' in data and isinstance(data['per_user'], dict)
+                        has_per_user_conns = 'per_user_connections' in data
                         
                         # Store in runtime cache for API responses
                         _node_stats_cache[node.id] = {
@@ -1436,7 +1450,7 @@ async def collect_node_stats():
                         }
                         
                         # Per-user traffic from Prometheus (preferred)
-                        if per_user_data:
+                        if has_per_user_traffic:
                             # Build username->user_id map for this node
                             node_users = (await session.execute(
                                 select(VPNUser).where(
@@ -1487,18 +1501,21 @@ async def collect_node_stats():
                                                 bytes_transferred=user_bytes,
                                             ))
                         
-                        # Update last_connected_at only for users with active connections (per-user)
-                        if per_user_conns:
-                            node_users_all = (await session.execute(
-                                select(VPNUser).where(VPNUser.assigned_node_id == node.id)
-                            )).scalars().all()
-                            uname_map = {u.username: u for u in node_users_all}
-                            now = datetime.now(timezone.utc)
-                            for uname, conn_count in per_user_conns.items():
-                                if conn_count > 0 and uname in uname_map:
-                                    uname_map[uname].last_connected_at = now
+                        # Update last_connected_at only for users with active connections
+                        if has_per_user_conns:
+                            # Per-user connection data available — only update users who are actually connected
+                            if per_user_conns:  # non-empty means someone is connected
+                                node_users_all = (await session.execute(
+                                    select(VPNUser).where(VPNUser.assigned_node_id == node.id)
+                                )).scalars().all()
+                                uname_map = {u.username: u for u in node_users_all}
+                                now = datetime.now(timezone.utc)
+                                for uname, conn_count in per_user_conns.items():
+                                    if conn_count > 0 and uname in uname_map:
+                                        uname_map[uname].last_connected_at = now
+                            # else: per_user_conns is {} — no one connected, don't update anyone
                         elif data.get('connected_devices', 0) > 0:
-                            # Fallback: no per-user data, update all active users
+                            # Fallback: node doesn't support per-user connections, update all active users
                             connected_users = (await session.execute(
                                 select(VPNUser).where(
                                     VPNUser.assigned_node_id == node.id,
@@ -1509,7 +1526,7 @@ async def collect_node_stats():
                             for cu in connected_users:
                                 cu.last_connected_at = now
 
-                        logger.debug(f"Node {node.name} stats: up={upload}, down={download}, per_user_keys={len(per_user_data)}, devices={data.get('connected_devices', 0)}")
+                        logger.info(f"Node {node.name} stats: up={upload}, down={download}, per_user_keys={len(per_user_data)}, per_user_conns={per_user_conns}, devices={data.get('connected_devices', 0)}, has_per_user_traffic={has_per_user_traffic}, has_per_user_conns={has_per_user_conns}")
                     except Exception as e:
                         logger.debug(f"Failed to collect stats from {node.name}: {e}")
                 await session.commit()
